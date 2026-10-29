@@ -18,7 +18,7 @@ def calc_ranking(df: pd.DataFrame, state_w_forms: dict, cb_rate: float, closes_o
     df["w_form"] = df["SECID"].map(w_forms).fillna("-")
     df["score_w"] = df["w_form"].map(w_scores).fillna(0)
     
-    # 2. Арсагера (жесткая подстановка)
+    # 2. Арсагера (жесткая подстановка из конфига, если профиль пустой)
     arsagera_groups = state.g("arsagera_groups")
     if not arsagera_groups or not isinstance(arsagera_groups, dict) or len(arsagera_groups) == 0:
         arsagera_groups = DEFAULT_ARSAGERA_GROUPS
@@ -58,7 +58,8 @@ def calc_ranking(df: pd.DataFrame, state_w_forms: dict, cb_rate: float, closes_o
     # 5. Выплаты
     df["score_paid_12m"] = (df["div_12m"] > 0).astype(int) * 100
     
-    # 6. DSI
+    # 6. DSI (ЖЕСТКОЕ ОГРАНИЧЕНИЕ: не более 1.0)
+    df["dsi"] = df["dsi"].clip(upper=1.0)
     df["score_dsi"] = df["dsi"].fillna(0) * 100
     
     # 7. Листинг
