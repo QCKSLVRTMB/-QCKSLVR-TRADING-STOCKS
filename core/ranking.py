@@ -20,9 +20,7 @@ def calc_ranking(df: pd.DataFrame, state_w_forms: dict, cb_rate: float, closes_o
     
     # 2. Арсагера (ПРИНУДИТЕЛЬНОЕ СЛИЯНИЕ)
     arsagera_groups = state.g("arsagera_groups")
-    if not isinstance(arsagera_groups, dict): 
-        arsagera_groups = {}
-    # Объединяем дефолтные и сохраненные данные
+    if not isinstance(arsagera_groups, dict): arsagera_groups = {}
     combined_ars = {**DEFAULT_ARSAGERA_GROUPS, **arsagera_groups}
         
     ars_scores = {1: 100, 2: 75, 3: 50, 4: 25}
@@ -60,7 +58,7 @@ def calc_ranking(df: pd.DataFrame, state_w_forms: dict, cb_rate: float, closes_o
     # 5. Выплаты
     df["score_paid_12m"] = (df["div_12m"] > 0).astype(int) * 100
     
-    # 6. DSI (жесткая защита)
+    # 6. DSI (жесткая защита от выбросов)
     df["dsi"] = df["dsi"].clip(upper=1.0)
     df["score_dsi"] = df["dsi"].fillna(0) * 100
     
@@ -78,6 +76,7 @@ def calc_ranking(df: pd.DataFrame, state_w_forms: dict, cb_rate: float, closes_o
         axis=1
     )
 
+    # Строгий подсчет всех 8 столбцов
     score_cols = [
         "score_w", "score_arsagera", "score_strength", 
         "score_div", "score_paid_12m", "score_dsi", 
@@ -88,6 +87,6 @@ def calc_ranking(df: pd.DataFrame, state_w_forms: dict, cb_rate: float, closes_o
 
 def get_asset_color(div_yield: float, cb_rate: float, rel_strength: float) -> str:
     if div_yield > cb_rate and rel_strength > 0: return "green"
+    if div_yield <= cb_rate and rel_strength > 0: return "orange"
     if div_yield > cb_rate and rel_strength <= 0: return "yellow"
-    if div_yield == 0 and rel_strength > 0: return "orange"
     return "red"
