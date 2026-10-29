@@ -13,12 +13,13 @@ def render_rating():
         st.warning("Нет данных MOEX.")
         return
 
+    # Фильтруем только те, по которым были торги (убираем мусорные тикеры)
     if "VALTODAY" in df_stocks.columns:
-        df_stocks = df_stocks[df_stocks["VALTODAY"] > 0].sort_values("VALTODAY", ascending=False).head(50)
+        df_stocks = df_stocks[df_stocks["VALTODAY"] > 0]
 
     extreme_date = state.g("extreme_date")
     
-    with st.spinner("Расчет рейтинга..."):
+    with st.spinner("Расчет рейтинга по всем активам рынка..."):
         closes_on_extreme = fetch_all_closes_on_date(extreme_date)
         imoex_ext, _ = fetch_extreme_close("IMOEX", extreme_date, market="index")
         imoex_row = df_indices[df_indices['SECID']=='IMOEX']
@@ -87,4 +88,12 @@ def render_rating():
         })
     )
 
-    st.dataframe(styled_df, use_container_width=True, hide_index=True)
+    # Динамический расчет высоты: 35 пикселей на строку + 38 на заголовок
+    table_height = (len(styled_df) + 1) * 35 + 10
+
+    st.dataframe(
+        styled_df, 
+        use_container_width=True, 
+        hide_index=True,
+        height=table_height
+    )
