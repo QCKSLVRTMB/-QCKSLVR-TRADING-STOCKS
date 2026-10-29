@@ -19,7 +19,7 @@ def calc_ranking(df: pd.DataFrame, state_w_forms: dict, cb_rate: float, closes_o
     df["w_form"] = df["SECID"].map(w_forms).fillna("-")
     df["score_w"] = df["w_form"].map(w_scores).fillna(0)
     
-    # 2. Арсагера (принудительное слияние)
+    # 2. Арсагера
     user_ars = state.g("arsagera_groups")
     if not isinstance(user_ars, dict): user_ars = {}
     combined_ars = {**DEFAULT_ARSAGERA_GROUPS, **user_ars}
@@ -45,11 +45,26 @@ def calc_ranking(df: pd.DataFrame, state_w_forms: dict, cb_rate: float, closes_o
     df["score_strength"] = (df["rel_strength"] > 0).astype(int) * 100
     
     # 4. Дивиденды
-    def get_div_data(ticker):
+    dohod_data = state.g("dohod_data", {})
+    
+    def get_div_data(row):
+        ticker = row["SECID"]
+        shortname = str(row["SHORTNAME"]).strip().upper()
+        
+        # 1. Ищем в загруженном файле по имени
+        if shortname in dohod_data:
+            return dohod_data[shortname]["div"], dohod_data[shortname]["dsi"]
+            
+        # 2. Частичное совпадение (например, "Сбербанк" и "Сбербанк России")
+        for name, data in dohod_data.items():
+            if shortname in name or name in shortname:
+                return data["div"], data["dsi"]
+                
+        # 3. Если файл не загружен — идем в интернет
         res = fetch_dividends_dohod(ticker)
         return res.get("div_12m", 0.0), res.get("dsi", 0.0)
 
-    div_data = df["SECID"].apply(get_div_data)
+    div_data = df.apply(get_div_data, axis=1)
     df["div_12m"] = [x[0] for x in div_data]
     df["dsi"] = [x[1] for x in div_data]
     
