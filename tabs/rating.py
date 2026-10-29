@@ -18,7 +18,7 @@ def render_rating():
 
     extreme_date = state.g("extreme_date")
     
-    with st.spinner("Расчет рейтинга..."):
+    with st.spinner("Расчет рейтинга (параллельная загрузка)..."):
         imoex_ext, _ = fetch_extreme_close("IMOEX", extreme_date, market="index")
         imoex_row = df_indices[df_indices['SECID']=='IMOEX']
         imoex_curr = imoex_row['CURRENTVALUE'].values[0] if not imoex_row.empty else 0.0
@@ -26,7 +26,6 @@ def render_rating():
         w_forms = state.g("w_formations")
         cb_rate = state.g("cb_rate")
         
-        # Передаем extreme_date в calc_ranking
         df = calc_ranking(df_stocks, w_forms, cb_rate, extreme_date, imoex_ext, imoex_curr)
     
     df = df.sort_values("total_score", ascending=False).reset_index(drop=True)
@@ -52,21 +51,17 @@ def render_rating():
     def apply_styles(row):
         styles = [""] * len(row)
         
-        # W-формация
         w = row["W-формация"]
         if w == "вверх": styles[4] = "background-color: #4CAF50; color: white;"
         elif w == "рейндж": styles[4] = "background-color: #2196F3; color: white;"
         elif w == "вниз": styles[4] = "background-color: #F44336; color: white;"
         
-        # В составе индекса
         if row["В составе индекса"] == "да": styles[6] = "background-color: #4CAF50; color: white;"
         else: styles[6] = "background-color: #F44336; color: white;"
         
-        # Сила актива
         if row["Сила актива"] > 0: styles[7] = "background-color: #4CAF50; color: white;"
         else: styles[7] = "background-color: #F44336; color: white;"
         
-        # Вид актива
         color = row["Вид актива"]
         if color == "green": styles[3] = "background-color: #4CAF50; color: #4CAF50;"
         elif color == "yellow": styles[3] = "background-color: #FFEB3B; color: #FFEB3B;"
