@@ -31,6 +31,7 @@ def fetch_moex_stocks() -> pd.DataFrame:
         st.warning(f"ISS недоступен: {e}")
         return pd.DataFrame()
 
+    # Защита от отсутствия колонок
     for col in ["LOTSIZE", "MINSTEP", "PREVPRICE", "LISTLEVEL", "ISSUESIZE", "DECIMALS", "SECID", "SHORTNAME"]:
         if col not in sec.columns: sec[col] = 0 if col not in ["SECID", "SHORTNAME"] else ""
     for col in ["LAST", "VALTODAY", "LASTCHANGEPRCNT", "NUMTRADES", "SECID"]:
@@ -106,7 +107,7 @@ def fetch_extreme_close(ticker: str, date_val, market: str = "index") -> tuple[f
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def fetch_dividends_moex(ticker: str) -> float:
-    """ИСПРАВЛЕНО: Парсинг по именам колонок, а не по индексам."""
+    """Суммирует дивиденды за последние 12 месяцев, отсекая будущие даты. Нечувствительно к регистру колонок."""
     url = ISS_DIVIDENDS.format(ticker=ticker)
     try:
         r = _session().get(url, timeout=10)
@@ -115,11 +116,14 @@ def fetch_dividends_moex(ticker: str) -> float:
         data = block.get("data", [])
         if not data or not cols: return 0.0
 
-        # Ищем правильные индексы колонок
-        try:
-            date_idx = cols.index("registryclosedate")
-            val_idx = cols.index("value")
-        except ValueError:
+        # Ищем правильные индексы колонок, игнорируя регистр
+        date_idx, val_idx = None, None
+        for i, c in enumerate(cols):
+            c_lower = c.lower()
+            if c_lower == "registryclosedate": date_idx = i
+            elif c_lower == "value": val_idx = i
+            
+        if date_idx is None or val_idx is None:
             return 0.0
 
         today = datetime.now().date()
@@ -131,10 +135,11 @@ def fetch_dividends_moex(ticker: str) -> float:
             val = row[val_idx]
             if reg_date_str and val:
                 try:
-                    reg_date = datetime.strptime(reg_date_str, "%Y-%m-%d").date()
+                    # Берем только первые 10 символов (YYYY-MM-DD)
+                    reg_date = datetime.strptime(str(reg_date_str)[:10], "%Y-%m-%d").date()
                     if one_year_ago <= reg_date <= today:
                         total_div += float(val)
-                except:
+                except Exception:
                     pass
         return total_div
     except Exception:
