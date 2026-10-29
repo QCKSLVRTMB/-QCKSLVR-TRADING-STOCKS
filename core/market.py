@@ -161,26 +161,29 @@ def fetch_dividends_dohod(ticker: str) -> dict:
             if tbody:
                 for row in tbody.find_all('tr'):
                     cells = row.find_all('td')
-                    if len(cells) >= 8:
+                    if len(cells) >= 4:
+                        # Период находится в 3-й колонке (индекс 2)
                         period = cells[2].get_text(strip=True)
-                        dsi_val = cells[7].get_text(strip=True).replace(',', '.')
-                        div_val = cells[3].get_text(strip=True).replace(' ', '').replace(',', '.')
-
-                        # Извлекаем DSI (всегда проверяем, что он от 0 до 1)
+                        
+                        # DSI всегда находится в самом последнем столбце таблицы (индекс -1)
+                        dsi_text = cells[-1].get_text(strip=True).replace(',', '.')
                         try:
-                            d = float(dsi_val)
+                            d = float(dsi_text)
                             if 0.0 <= d <= 1.0:
                                 result["dsi"] = d
-                        except: pass
+                        except ValueError:
+                            pass
 
-                        # Если нашли строку "всего 12м", берем из нее дивиденд
-                        if "12м" in period or "12 месяцев" in period:
+                        # Если нашли строку "всего 12м", берем из нее дивиденд (индекс 3)
+                        if "всего 12м" in period:
+                            div_text = cells[3].get_text(strip=True).replace(' ', '').replace(',', '.')
                             try:
-                                result["div_12m"] = float(div_val)
-                            except: pass
+                                result["div_12m"] = float(div_text)
+                            except ValueError:
+                                pass
                             break
 
-        # Если таблицу найти не удалось, используем старый текстовый парсер как запасной вариант
+        # Запасной вариант, если таблицу найти не удалось
         if result["div_12m"] == 0.0:
             text = soup.get_text(separator=' ', strip=True)
             div_match = re.search(r'Совокупные дивиденды в следующие 12m:\s*([0-9]+[.,]?[0-9]*)\s*руб', text, re.IGNORECASE)
