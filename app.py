@@ -42,22 +42,40 @@ tab_market, tab_rating, tab_indices, tab_sectors, tab_calc = st.tabs([
 ])
 
 with tab_market:
-    render_main_tab(df_stocks=df_stocks, deposit=G["deposit"])
+    try:
+        render_main_tab(df_stocks=df_stocks, deposit=G["deposit"])
+    except Exception as e:
+        st.error(f"Ошибка в 'Обзоре': {e}")
+
 with tab_rating:
-    render_rating()
+    try:
+        render_rating()
+    except Exception as e:
+        st.error(f"Ошибка в 'Рейтинге': {e}")
+
 with tab_indices:
-    render_indices()
+    try:
+        render_indices()
+    except Exception as e:
+        st.error(f"Ошибка в 'Индексах': {e}")
+
 with tab_sectors:
-    render_sectors()
+    try:
+        render_sectors()
+    except Exception as e:
+        st.error(f"Ошибка в 'Секторах': {e}")
+
 with tab_calc:
     active_tickers = G.get("active_tickers", [])
     if not active_tickers:
         st.info("Выберите тикер на вкладке 'Обзор'.")
     else:
-        # Защита от None
         active = seg("Инструмент", active_tickers, key="plan_ticker", default=active_tickers[0])
         if not active or active not in active_tickers:
             active = active_tickers[0]
-        render_trade_planner(active, df_stocks)
+        try:
+            render_trade_planner(active, df_stocks)
+        except Exception as e:
+            st.error(f"Ошибка в 'Калькуляторе': {e}")
 
 state.autosave()
