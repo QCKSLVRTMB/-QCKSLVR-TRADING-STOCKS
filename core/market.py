@@ -106,25 +106,34 @@ def fetch_extreme_close(ticker: str, date_val, market: str = "index") -> tuple[f
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def fetch_dividends_moex(ticker: str) -> float:
-    """Суммирует дивиденды за последние 12 месяцев, отсекая будущие даты."""
+    """ИСПРАВЛЕНО: Парсинг по именам колонок, а не по индексам."""
     url = ISS_DIVIDENDS.format(ticker=ticker)
     try:
         r = _session().get(url, timeout=10)
-        data = r.json().get("dividends", {}).get("data", [])
-        if not data: return 0.0
-        
+        block = r.json().get("dividends", {})
+        cols = block.get("columns", [])
+        data = block.get("data", [])
+        if not data or not cols: return 0.0
+
+        # Ищем правильные индексы колонок
+        try:
+            date_idx = cols.index("registryclosedate")
+            val_idx = cols.index("value")
+        except ValueError:
+            return 0.0
+
         today = datetime.now().date()
         one_year_ago = today - timedelta(days=365)
         total_div = 0.0
         
         for row in data:
-            # row[1] - дата закрытия реестра, row[2] - сумма дивиденда
-            reg_date_str = row[1]
-            if reg_date_str:
+            reg_date_str = row[date_idx]
+            val = row[val_idx]
+            if reg_date_str and val:
                 try:
                     reg_date = datetime.strptime(reg_date_str, "%Y-%m-%d").date()
                     if one_year_ago <= reg_date <= today:
-                        total_div += float(row[2])
+                        total_div += float(val)
                 except:
                     pass
         return total_div
