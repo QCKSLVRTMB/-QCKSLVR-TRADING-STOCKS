@@ -20,9 +20,18 @@ G = S["global"]
 def _sync(key, gkey):
     state.set_global(gkey, st.session_state[key])
 
+def _sync_extreme():
+    # Валидация формата даты при вводе
+    val = st.session_state.sb_extreme
+    try:
+        datetime.strptime(val, "%d.%m.%Y")
+        state.set_global("extreme_date", val)
+    except ValueError:
+        st.error("Неверный формат даты. Используйте DD.MM.YYYY")
+
 with st.sidebar:
     st.header("Настройки")
-    st.date_input("Дата экстремума D", value=datetime.strptime(G["extreme_date"], "%d.%m.%Y"), key="sb_extreme", on_change=lambda: state.set_global("extreme_date", st.session_state.sb_extreme.strftime("%d.%m.%Y")))
+    st.text_input("Экстремум", value=G["extreme_date"], key="sb_extreme", on_change=_sync_extreme, help="Формат: DD.MM.YYYY")
     st.number_input("Ставка ЦБ, %", value=float(G["cb_rate"]), step=0.25, format="%.2f", key="sb_cb", on_change=_sync, args=("sb_cb", "cb_rate"))
     st.number_input("Депозит, ₽", value=int(G["deposit"]), step=1000, key="sb_dep", on_change=_sync, args=("sb_dep", "deposit"))
     st.number_input("Резерв кэша, %", value=float(G["cash_reserve"]), step=1.0, key="sb_cash", on_change=_sync, args=("sb_cash", "cash_reserve"))
