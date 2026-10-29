@@ -39,29 +39,46 @@ with st.sidebar:
     st.divider()
     st.header("Импорт / Экспорт")
     
+    # УМНЫЙ ЗАГРУЗЧИК EXCEL
     excel_file = st.file_uploader("Загрузить Excel (W, DSI, Портфель)", type=["xlsx", "xls"])
     if excel_file:
         try:
             xls = pd.ExcelFile(excel_file)
             sheets = xls.sheet_names
             
+            # 1. W-формации
             if 'W_Formations' in sheets:
                 df_w = pd.read_excel(xls, sheet_name='W_Formations')
-                if len(df_w.columns) >= 2:
-                    new_w = dict(zip(df_w.iloc[:, 0].astype(str).str.upper(), df_w.iloc[:, 1]))
-                    state.set_global("w_formations", new_w)
+                # Ищем колонки по названиям
+                ticker_col = next((c for c in df_w.columns if 'Тикер' in str(c) or 'ticker' in str(c).lower()), df_w.columns[0])
+                form_col = next((c for c in df_w.columns if 'Формация' in str(c) or 'Формация' in str(c).lower()), df_w.columns[1])
+                
+                new_w = dict(zip(df_w[ticker_col].astype(str).str.strip().str.upper(), df_w[form_col]))
+                state.set_global("w_formations", new_w)
             
+            # 2. Фундаментальные данные (Арсагера, DSI)
             if 'Fundamentals' in sheets:
                 df_fund = pd.read_excel(xls, sheet_name='Fundamentals')
-                if len(df_fund.columns) >= 3:
-                    new_fund = {}
-                    for _, row in df_fund.iterrows():
-                        ticker = str(row.iloc[0]).strip().upper()
-                        ars = int(row.iloc[1]) if pd.notna(row.iloc[1]) else 0
-                        dsi = float(row.iloc[2]) if pd.notna(row.iloc[2]) else 0.0
-                        new_fund[ticker] = {"ars_group": ars, "dsi": dsi}
-                    state.set_global("fundamental_data", new_fund)
+                ticker_col = next((c for c in df_fund.columns if 'Тикер' in str(c) or 'ticker' in str(c).lower()), df_fund.columns[0])
+                ars_col = next((c for c in df_fund.columns if 'Арсагера' in str(c) or 'групп' in str(c).lower() or 'ars' in str(c).lower()), df_fund.columns[1])
+                dsi_col = next((c for c in df_fund.columns if 'DSI' in str(c) or 'dsi' in str(c).lower()), df_fund.columns[2])
+                
+                new_fund = {}
+                for _, row in df_fund.iterrows():
+                    ticker = str(row[ticker_col]).strip().upper()
+                    if not ticker or ticker == "NAN": continue
+                    
+                    # Парсим группу (если "6.4", берем 4)
+                    ars_val = str(row[ars_col])
+                    ars_match = re.search(r'(\d)$', ars_val)
+                    ars = int(ars_match.group(1)) if ars_match else int(float(row[ars_col])) if pd.notna(row[ars_col]) else 0
+                    
+                    dsi = float(row[dsi_col]) if pd.notna(row[dsi_col]) else 0.0
+                    new_fund[ticker] = {"ars_group": ars, "dsi": dsi}
+                    
+                state.set_global("fundamental_data", new_fund)
             
+            # 3. Портфель
             if 'Portfolio' in sheets:
                 df_port = pd.read_excel(xls, sheet_name='Portfolio')
                 state.set_global("portfolio_data", df_port.to_dict(orient="records"))
