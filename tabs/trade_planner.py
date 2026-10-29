@@ -121,7 +121,7 @@ def render_trade_planner(ticker: str, df_stocks: pd.DataFrame):
         tdata["cluster_threshold"] = int(overlap_pct)
         
         if show_clusters:
-            d1_pts = tdata["charts"]["D1"].get("channel", []) # БЕЗОПАСНО
+            d1_pts = tdata["charts"]["D1"].get("channel", [])
             if len(d1_pts) == 3:
                 cluster_start_time = pd.to_datetime(d1_pts[2][0])
                 df_m10 = fetch_moex_candles(ticker, interval=10, days_back=60)
@@ -129,7 +129,7 @@ def render_trade_planner(ticker: str, df_stocks: pd.DataFrame):
                     clusters_data = calculate_volume_profile(df_m10.loc[cluster_start_time:], tf_name="M10", threshold_pct=overlap_pct)
 
         if show_custom_clusters:
-            cr_pts = tdata["charts"]["D1"].get("cluster_range", []) # БЕЗОПАСНО
+            cr_pts = tdata["charts"]["D1"].get("cluster_range", [])
             if len(cr_pts) == 2:
                 t1 = pd.to_datetime(cr_pts[0][0])
                 t2 = pd.to_datetime(cr_pts[1][0])
@@ -176,9 +176,9 @@ def _render_tf_chart(ticker, tf_name, cfg, inst, tdata, mobile, buy_level, sell_
 
     b1, b2 = st.columns(2)
     if b1.button("Отменить", key=f"undo_{ticker}_{tf_name}", use_container_width=True):
-        if chart_data.get(target_tool): chart_data[target_tool].pop(); state.autosave(force=True); st.rerun(scope="fragment")
+        if chart_data.get(target_tool): chart_data[target_tool].pop(); state.autosave(force=True); st.rerun()
     if b2.button("Очистить", key=f"clr_{ticker}_{tf_name}", use_container_width=True):
-        chart_data[target_tool] = []; state.autosave(force=True); st.rerun(scope="fragment")
+        chart_data[target_tool] = []; state.autosave(force=True); st.rerun()
 
     df = fetch_moex_candles(ticker, cfg["interval"], cfg["days_back"])
     if df.empty:
@@ -262,7 +262,7 @@ def _render_tf_chart(ticker, tf_name, cfg, inst, tdata, mobile, buy_level, sell_
             if new_pts != pts:
                 chart_data[target_tool] = new_pts
                 state.autosave(force=True)
-                st.rerun(scope="fragment")
+                st.rerun()
 
     if tf_name == "W":
         w_ch_s, w_fib_s = snap_points(tdata["charts"]["W"]["channel"], view), snap_points(tdata["charts"]["W"]["fib"], view)
