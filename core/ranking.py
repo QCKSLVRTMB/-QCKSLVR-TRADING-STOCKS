@@ -1,5 +1,5 @@
 import pandas as pd
-from core.market import fetch_extreme_close, fetch_dividends_dohod
+from core.market import fetch_many_extreme_closes, fetch_many_dividends
 from core import state
 from core.config import DEFAULT_W_FORMATIONS
 
@@ -34,15 +34,18 @@ def calc_ranking(df: pd.DataFrame, state_w_forms: dict, cb_rate: float, extreme_
     df["dsi"] = df["SECID"].apply(get_dsi_val)
     df["score_dsi"] = df["dsi"].fillna(0).clip(upper=1.0) * 100
     
-    # 3. Сила актива (индивидуальный запрос для каждого тикера)
+    # 3. Параллельная загрузка цен экстремума и дивидендов
+    tickers = df["SECID"].tolist()
+    closes_on_extreme = fetch_many_extreme_closes(tickers, extreme_date)
+    divs_data = fetch_many_dividends(tickers)
+
+    # 4. Сила актива
     imoex_chg = (imoex_curr / imoex_ext - 1) if imoex_ext > 0 else 0.0
     
     def get_rel_strength(row):
         ticker = row["SECID"]
         price_curr = row["PRICE"]
-        
-        # Запрашиваем цену на экстремум для конкретной акции
-        price_ext, _ = fetch_extreme_close(ticker, extreme_date, market="shares")
+        price_ext = closes_on_extreme.get(ticker, 0.0)
         
         if price_curr > 0 and price_ext > 0:
             stock_chg = (price_curr / price_ext - 1)
@@ -54,27 +57,23 @@ def calc_ranking(df: pd.DataFrame, state_w_forms: dict, cb_rate: float, extreme_
     df["rel_strength"] = df.apply(get_rel_strength, axis=1)
     df["score_strength"] = (df["rel_strength"] > 0).astype(int) * 100
     
-    # 4. Дивиденды по рынку
-    def get_div_12m(ticker):
-        res = fetch_dividends_dohod(ticker)
-        return res.get("div_12m", 0.0)
-
-    df["div_12m"] = df["SECID"].apply(get_div_12m)
+    # 5. Дивиденды по рынку
+    df["div_12m"] = df["SECID"].apply(lambda t: divs_data.get(t, {}).get("div_12m", 0.0))
     df["div_yield"] = df.apply(lambda r: (r["div_12m"] / r["PRICE"] * 100) if r["PRICE"] > 0 else 0.0, axis=1)
     df["score_div"] = df.apply(lambda r: 100 if r["div_yield"] > cb_rate else (50 if r["div_yield"] > 0 else 0), axis=1)
     
-    # 5. Выплаты
+    # 6. Выплаты
     df["score_paid_12m"] = (df["div_12m"] > 0).astype(int) * 100
     
-    # 6. Листинг
+    # 7. Листинг
     list_scores = {1: 100, 2: 70, 3: 40}
     df["score_list"] = df["LISTLEVEL"].map(list_scores).fillna(0)
     
-    # 7. Индекс
+    # 8. Индекс
     df["in_index"] = df["SECID"].isin(IMOEX_CONSTITUENTS)
     df["score_in_index"] = df["in_index"].astype(int) * 100
     
-    # 8. Рекомендуемая цена
+    # 9. Рекомендуемая цена
     df["recommended_price"] = df.apply(
         lambda r: round(r["div_12m"] / (cb_rate / 100), 2) if r["div_12m"] > 0 and cb_rate > 0 else 0.0, 
         axis=1
