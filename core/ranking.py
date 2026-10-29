@@ -41,11 +41,18 @@ def calc_ranking(df: pd.DataFrame, state_w_forms: dict, cb_rate: float, closes_o
     # 4. Дивиденды
     def get_div_data(ticker):
         res = fetch_dividends_dohod(ticker)
-        return res.get("div_12m", 0.0), res.get("dsi", 0.0)
+        if isinstance(res, dict):
+            return res.get("div_12m", 0.0), res.get("dsi", 0.0)
+        return 0.0, 0.0
 
     div_data = df["SECID"].apply(get_div_data)
     df["div_12m"] = [x[0] for x in div_data]
     df["dsi"] = [x[1] for x in div_data]
+    
+    # Принудительно делаем числами
+    df["div_12m"] = pd.to_numeric(df["div_12m"], errors="coerce").fillna(0.0)
+    df["dsi"] = pd.to_numeric(df["dsi"], errors="coerce").fillna(0.0)
+    df["PRICE"] = pd.to_numeric(df["PRICE"], errors="coerce").fillna(0.0)
     
     df["div_yield"] = df.apply(lambda r: (r["div_12m"] / r["PRICE"] * 100) if r["PRICE"] > 0 else 0.0, axis=1)
     df["score_div"] = df.apply(lambda r: 100 if r["div_yield"] > cb_rate else (50 if r["div_yield"] > 0 else 0), axis=1)
@@ -54,7 +61,7 @@ def calc_ranking(df: pd.DataFrame, state_w_forms: dict, cb_rate: float, closes_o
     df["score_paid_12m"] = (df["div_12m"] > 0).astype(int) * 100
     
     # 6. DSI
-    df["score_dsi"] = df["dsi"].fillna(0) * 100
+    df["score_dsi"] = df["dsi"] * 100
     
     # 7. Листинг
     list_scores = {1: 100, 2: 70, 3: 40}
@@ -70,22 +77,23 @@ def calc_ranking(df: pd.DataFrame, state_w_forms: dict, cb_rate: float, closes_o
         axis=1
     )
 
-    # Итог (8 компонентов, максимум 800)
+    # Итог
     score_cols = [
-        "score_w", 
-        "score_arsagera",
-        "score_strength", 
-        "score_div", 
-        "score_paid_12m", 
-        "score_dsi", 
-        "score_list",
-        "score_in_index"
+        "score_w", "score_arsagera", "score_strength", 
+        "score_div", "score_paid_12m", "score_dsi", 
+        "score_list", "score_in_index"
     ]
     df["total_score"] = df[score_cols].sum(axis=1)
     return df
 
 def get_asset_color(div_yield: float, cb_rate: float, rel_strength: float) -> str:
-    if div_yield > cb_rate and rel_strength > 0: return "green"
-    if div_yield > cb_rate and rel_strength <= 0: return "yellow"
-    if div_yield == 0 and rel_strength > 0: return "orange"
+    try:
+        dy = float(div_yield)
+        rs = float(rel_strength)
+    except (ValueError, TypeError):
+        return "red"
+
+    if dy > cb_rate and rs > 0: return "green"
+    if dy > cb_rate and rs <= 0: return "yellow"
+    if dy == 0 and rs > 0: return "orange"
     return "red"
