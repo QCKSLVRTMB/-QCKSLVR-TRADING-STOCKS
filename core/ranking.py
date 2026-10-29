@@ -1,4 +1,5 @@
 import pandas as pd
+import re
 from core.market import fetch_many_extreme_closes, fetch_many_dividends
 from core import state
 from core.config import DEFAULT_W_FORMATIONS
@@ -15,7 +16,8 @@ def calc_ranking(df: pd.DataFrame, state_w_forms: dict, cb_rate: float, extreme_
     # 1. W-формация
     w_forms = state_w_forms if state_w_forms else DEFAULT_W_FORMATIONS
     w_scores = {"вверх": 100, "рейндж": 50, "вниз": 0}
-    df["w_form"] = df["SECID"].map(w_forms).fillna("-")
+    # Приводим все значения к нижнему регистру для надежности
+    df["w_form"] = df["SECID"].map(w_forms).fillna("-").astype(str).str.lower()
     df["score_w"] = df["w_form"].map(w_scores).fillna(0)
     
     # 2. Арсагера и DSI (из Excel)
@@ -34,7 +36,7 @@ def calc_ranking(df: pd.DataFrame, state_w_forms: dict, cb_rate: float, extreme_
     df["dsi"] = df["SECID"].apply(get_dsi_val)
     df["score_dsi"] = df["dsi"].fillna(0).clip(upper=1.0) * 100
     
-    # 3. Параллельная загрузка цен экстремума и дивидендов
+    # 3. Параллельная загрузка
     tickers = df["SECID"].tolist()
     closes_on_extreme = fetch_many_extreme_closes(tickers, extreme_date)
     divs_data = fetch_many_dividends(tickers)
@@ -57,7 +59,7 @@ def calc_ranking(df: pd.DataFrame, state_w_forms: dict, cb_rate: float, extreme_
     df["rel_strength"] = df.apply(get_rel_strength, axis=1)
     df["score_strength"] = (df["rel_strength"] > 0).astype(int) * 100
     
-    # 5. Дивиденды по рынку
+    # 5. Дивиденды
     df["div_12m"] = df["SECID"].apply(lambda t: divs_data.get(t, {}).get("div_12m", 0.0))
     df["div_yield"] = df.apply(lambda r: (r["div_12m"] / r["PRICE"] * 100) if r["PRICE"] > 0 else 0.0, axis=1)
     df["score_div"] = df.apply(lambda r: 100 if r["div_yield"] > cb_rate else (50 if r["div_yield"] > 0 else 0), axis=1)
