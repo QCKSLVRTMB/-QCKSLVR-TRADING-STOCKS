@@ -21,7 +21,6 @@ def _sync(key, gkey):
     state.set_global(gkey, st.session_state[key])
 
 def _sync_extreme():
-    # Валидация формата даты при вводе
     val = st.session_state.sb_extreme
     try:
         datetime.strptime(val, "%d.%m.%Y")
@@ -55,7 +54,10 @@ with tab_calc:
     if not active_tickers:
         st.info("Выберите тикер на вкладке 'Обзор'.")
     else:
+        # Защита от None
         active = seg("Инструмент", active_tickers, key="plan_ticker", default=active_tickers[0])
+        if not active or active not in active_tickers:
+            active = active_tickers[0]
         render_trade_planner(active, df_stocks)
 
 state.autosave()
