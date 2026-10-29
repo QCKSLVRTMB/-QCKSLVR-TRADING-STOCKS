@@ -4,7 +4,7 @@ from datetime import datetime
 import pandas as pd
 from core import state, storage
 from core.config import APP_TITLE
-from core.market import fetch_moex_stocks
+from core.market import fetch_moex_stocks, parse_sources_excel
 from tabs.main_table import render_main_tab
 from tabs.indices import render_indices
 from tabs.rating import render_rating
@@ -39,12 +39,22 @@ with st.sidebar:
     st.divider()
     st.header("Импорт / Экспорт")
     
+    # ЗАГРУЗКА ИСТОЧНИКОВ (АРСАГЕРА + DSI)
+    sources_file = st.file_uploader("Загрузить Источники.xlsx", type=["xlsx"])
+    if sources_file:
+        if st.button("Применить источники", use_container_width=True):
+            ars_data, dohod_data = parse_sources_excel(sources_file)
+            state.set_global("arsagera_groups", ars_data)
+            state.set_global("dohod_data", dohod_data)
+            st.success("Данные Арсагеры и DSI загружены!")
+            state.autosave()
+            st.rerun()
+
     # Импорт W-формаций
     w_file = st.file_uploader("Импорт W-формаций (Excel)", type=["xlsx", "xls"])
     if w_file:
         try:
             df_w = pd.read_excel(w_file)
-            # Ожидаем колонки Тикер, Формация (или берем 1-ю и 2-ю)
             if len(df_w.columns) >= 2:
                 new_w = dict(zip(df_w.iloc[:, 0].str.upper(), df_w.iloc[:, 1]))
                 state.set_global("w_formations", new_w)
@@ -52,31 +62,28 @@ with st.sidebar:
                 state.autosave()
                 st.rerun()
         except Exception as e:
-            st.error(f"Ошибка чтения файла: {e}")
+            st.error(f"Ошибка чтения: {e}")
 
     # Импорт Портфеля
     port_file = st.file_uploader("Импорт Портфеля (Excel)", type=["xlsx", "xls"])
     if port_file:
         try:
             df_port = pd.read_excel(port_file)
-            # Сохраняем как DataFrame в JSON (предварительно конвертируя в dict)
             state.set_global("portfolio_data", df_port.to_dict(orient="records"))
             st.success("Портфель загружен!")
             state.autosave()
             st.rerun()
         except Exception as e:
-            st.error(f"Ошибка чтения портфеля: {e}")
+            st.error(f"Ошибка чтения: {e}")
 
     st.divider()
     
-    # Экспорт JSON
-    if st.button("Подготовить экспорт"):
+    if st.button("Подготовить экспорт JSON"):
         st.session_state["_export_blob"] = storage.dumps(S)
     blob = st.session_state.get("_export_blob")
     if blob:
         st.download_button("Скачать JSON", data=blob, file_name=f"backup_{datetime.now().strftime('%d_%m_%y')}.json", mime="application/json")
 
-    # Импорт JSON
     json_file = st.file_uploader("Импорт JSON (полный бэкап)", type=["json"])
     if json_file and st.button("Применить бэкап"):
         parsed = storage.loads(json_file.getvalue().decode("utf-8"))
