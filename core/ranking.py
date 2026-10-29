@@ -1,6 +1,7 @@
 import pandas as pd
 from core.market import fetch_extreme_close, fetch_dividends_dohod
 from core import state
+from core.config import DEFAULT_ARSAGERA_GROUPS
 
 IMOEX_CONSTITUENTS = {
     "SBER", "GAZP", "LKOH", "ROSN", "NVTK", "TATN", "GMKN", "PLZL", 
@@ -8,7 +9,7 @@ IMOEX_CONSTITUENTS = {
     "MGNT", "MOEX", "PHOR", "SNGS", "TATNP", "TRNFP", "AFKS", "RTKM"
 }
 
-def calc_ranking(df: pd.DataFrame, state_w_forms: dict, cb_rate: float, closes_on_extreme: dict, imoex_ext: float, imoex_curr: float) -> pd.DataFrame:
+def calc_ranking(df: pd.DataFrame, state_w_forms: dict, cb_rate: float, extreme_date: str, closes_on_extreme: dict, imoex_ext: float, imoex_curr: float) -> pd.DataFrame:
     df = df.copy()
     
     # 1. W-формация (до 100)
@@ -17,7 +18,8 @@ def calc_ranking(df: pd.DataFrame, state_w_forms: dict, cb_rate: float, closes_o
     df["score_w"] = df["w_form"].map(w_scores).fillna(0)
     
     # 2. Рейтинг Арсагера (до 100)
-    arsagera_groups = state.g("arsagera_groups", {})
+    # Берем из стейта, если пусто - из дефолта
+    arsagera_groups = state.g("arsagera_groups") or DEFAULT_ARSAGERA_GROUPS
     ars_scores = {1: 100, 2: 75, 3: 50, 4: 25}
     df["ars_group"] = df["SECID"].map(arsagera_groups).fillna(0).astype(int)
     df["score_arsagera"] = df["ars_group"].map(ars_scores).fillna(0)
@@ -30,6 +32,10 @@ def calc_ranking(df: pd.DataFrame, state_w_forms: dict, cb_rate: float, closes_o
         price_curr = row["PRICE"]
         price_ext = closes_on_extreme.get(ticker, 0.0)
         
+        # ПРЕДОХРАНИТЕЛЬ: Если акции нет в общем списке (уперлись в лимит 1000), запрашиваем точечно
+        if price_ext == 0.0:
+            price_ext, _ = fetch_extreme_close(ticker, extreme_date, market="shares")
+            
         if price_curr > 0 and price_ext > 0:
             stock_chg = (price_curr / price_ext - 1)
             return (stock_chg - imoex_chg) * 100
