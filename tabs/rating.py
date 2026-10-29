@@ -12,20 +12,24 @@ def render_rating():
     if df_stocks.empty or df_indices.empty:
         st.warning("Нет данных MOEX.")
         return
-        
-    # Получаем данные IMOEX для расчета силы
-    extreme_date = state.g("extreme_date")
-    imoex_ext, _ = fetch_extreme_close("IMOEX", extreme_date, market="index")
-    imoex_row = df_indices[df_indices['SECID']=='IMOEX']
-    imoex_curr = imoex_row['CURRENTVALUE'].values[0] if not imoex_row.empty else 0.0
 
-    w_forms = state.g("w_formations")
-    cb_rate = state.g("cb_rate")
+    # Берем топ-50 по объему торгов, чтобы не превышать лимиты API и не ждать минуту
+    if "VALTODAY" in df_stocks.columns:
+        df_stocks = df_stocks[df_stocks["VALTODAY"] > 0].sort_values("VALTODAY", ascending=False).head(50)
+
+    extreme_date = state.g("extreme_date")
     
-    # Считаем рейтинг
-    df = calc_ranking(df_stocks, w_forms, cb_rate, extreme_date, imoex_ext, imoex_curr)
+    # Спиннер, чтобы пользователь видел, что идет расчет
+    with st.spinner("Расчет рейтинга (загрузка дивидендов и исторических цен)..."):
+        imoex_ext, _ = fetch_extreme_close("IMOEX", extreme_date, market="index")
+        imoex_row = df_indices[df_indices['SECID']=='IMOEX']
+        imoex_curr = imoex_row['CURRENTVALUE'].values[0] if not imoex_row.empty else 0.0
+
+        w_forms = state.g("w_formations")
+        cb_rate = state.g("cb_rate")
+        
+        df = calc_ranking(df_stocks, w_forms, cb_rate, extreme_date, imoex_ext, imoex_curr)
     
-    # Сортировка
     df = df.sort_values("total_score", ascending=False).reset_index(drop=True)
     df["№"] = df.index + 1
 
@@ -50,18 +54,22 @@ def render_rating():
         if w == "вверх": styles[4] = "background-color: #4CAF50; color: #4CAF50;"
         elif w == "рейндж": styles[4] = "background-color: #2196F3; color: #2196F3;"
         elif w == "вниз": styles[4] = "background-color: #F44336; color: #F44336;"
+        
         # В составе индекса
         if row["В составе индекса"]: styles[5] = "background-color: #4CAF50; color: #4CAF50;"
         else: styles[5] = "background-color: #F44336; color: #F44336;"
+        
         # Сила актива
         if row["Сила актива"] > 0: styles[6] = "background-color: #4CAF50; color: #4CAF50;"
         else: styles[6] = "background-color: #F44336; color: #F44336;"
+        
         # Вид актива
         color = row["Вид актива"]
         if color == "green": styles[3] = "background-color: #4CAF50; color: #4CAF50;"
         elif color == "yellow": styles[3] = "background-color: #FFEB3B; color: #FFEB3B;"
         elif color == "orange": styles[3] = "background-color: #FF9800; color: #FF9800;"
         elif color == "red": styles[3] = "background-color: #F44336; color: #F44336;"
+        
         return styles
 
     styled_df = (
