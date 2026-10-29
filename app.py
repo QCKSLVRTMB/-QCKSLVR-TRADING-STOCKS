@@ -31,7 +31,7 @@ def _sync_extreme():
 
 with st.sidebar:
     st.header("Настройки")
-    st.text_input("Экстремум", value=G["extreme_date"], key="sb_extreme", on_change=_sync_extreme, help="Формат: DD.MM.YYYY")
+    st.text_input("Экстремум", value=G["extreme_date"], key="sb_extreme", on_change=_sync_extreme)
     st.number_input("Ставка ЦБ, %", value=float(G["cb_rate"]), step=0.25, format="%.2f", key="sb_cb", on_change=_sync, args=("sb_cb", "cb_rate"))
     st.number_input("Депозит, ₽", value=int(G["deposit"]), step=1000, key="sb_dep", on_change=_sync, args=("sb_dep", "deposit"))
     st.number_input("Резерв кэша, %", value=float(G["cash_reserve"]), step=1.0, key="sb_cash", on_change=_sync, args=("sb_cash", "cash_reserve"))
@@ -39,67 +39,51 @@ with st.sidebar:
     st.divider()
     st.header("Импорт / Экспорт")
     
-    # 1. Загрузка W-формаций
-    w_file = st.file_uploader("1. W-формации (Excel)", type=["xlsx", "xls"])
-    if w_file:
+    excel_file = st.file_uploader("Загрузить Excel (W, DSI, Портфель)", type=["xlsx", "xls"])
+    if excel_file:
         try:
-            df_w = pd.read_excel(w_file)
-            if len(df_w.columns) >= 2:
-                new_w = dict(zip(df_w.iloc[:, 0].astype(str).str.upper(), df_w.iloc[:, 1]))
-                state.set_global("w_formations", new_w)
-                st.success("W-формации обновлены!")
-                state.autosave()
-                st.rerun()
-        except Exception as e:
-            st.error(f"Ошибка W: {e}")
-
-    # 2. Загрузка DSI и Арсагеры
-    fund_file = st.file_uploader("2. DSI и Арсагера (Excel)", type=["xlsx", "xls"])
-    if fund_file:
-        try:
-            df_fund = pd.read_excel(fund_file)
-            if len(df_fund.columns) >= 3:
-                new_fund = {}
-                for _, row in df_fund.iterrows():
-                    ticker = str(row.iloc[0]).strip().upper()
-                    ars = int(row.iloc[1]) if pd.notna(row.iloc[1]) else 0
-                    dsi = float(row.iloc[2]) if pd.notna(row.iloc[2]) else 0.0
-                    new_fund[ticker] = {"ars_group": ars, "dsi": dsi}
-                state.set_global("fundamental_data", new_fund)
-                st.success("DSI и Арсагера обновлены!")
-                state.autosave()
-                st.rerun()
-        except Exception as e:
-            st.error(f"Ошибка DSI: {e}")
-
-    # 3. Загрузка Портфеля
-    port_file = st.file_uploader("3. Портфель (Excel)", type=["xlsx", "xls"])
-    if port_file:
-        try:
-            df_port = pd.read_excel(port_file)
-            state.set_global("portfolio_data", df_port.to_dict(orient="records"))
-            st.success("Портфель загружен!")
+            xls = pd.ExcelFile(excel_file)
+            sheets = xls.sheet_names
+            
+            if 'W_Formations' in sheets:
+                df_w = pd.read_excel(xls, sheet_name='W_Formations')
+                if len(df_w.columns) >= 2:
+                    new_w = dict(zip(df_w.iloc[:, 0].astype(str).str.upper(), df_w.iloc[:, 1]))
+                    state.set_global("w_formations", new_w)
+            
+            if 'Fundamentals' in sheets:
+                df_fund = pd.read_excel(xls, sheet_name='Fundamentals')
+                if len(df_fund.columns) >= 3:
+                    new_fund = {}
+                    for _, row in df_fund.iterrows():
+                        ticker = str(row.iloc[0]).strip().upper()
+                        ars = int(row.iloc[1]) if pd.notna(row.iloc[1]) else 0
+                        dsi = float(row.iloc[2]) if pd.notna(row.iloc[2]) else 0.0
+                        new_fund[ticker] = {"ars_group": ars, "dsi": dsi}
+                    state.set_global("fundamental_data", new_fund)
+            
+            if 'Portfolio' in sheets:
+                df_port = pd.read_excel(xls, sheet_name='Portfolio')
+                state.set_global("portfolio_data", df_port.to_dict(orient="records"))
+            
+            st.success("✅ Данные из Excel загружены")
             state.autosave()
             st.rerun()
         except Exception as e:
-            st.error(f"Ошибка портфеля: {e}")
+            st.error(f"Ошибка чтения Excel: {e}")
 
-    st.divider()
-    
-    # Экспорт JSON
-    if st.button("Подготовить экспорт JSON", use_container_width=True):
+    if st.button("Подготовить экспорт JSON"):
         st.session_state["_export_blob"] = storage.dumps(S)
     blob = st.session_state.get("_export_blob")
     if blob:
-        st.download_button("Скачать JSON", data=blob, file_name=f"backup_{datetime.now().strftime('%d_%m_%y')}.json", mime="application/json", use_container_width=True)
+        st.download_button("Скачать JSON", data=blob, file_name=f"backup_{datetime.now().strftime('%d_%m_%y')}.json", mime="application/json")
 
-    # Импорт JSON
-    json_file = st.file_uploader("Импорт JSON (бэкап)", type=["json"])
-    if json_file and st.button("Применить бэкап", use_container_width=True):
-        parsed_json = storage.loads(json_file.getvalue().decode("utf-8"))
-        if parsed_json:
-            state.replace_state(parsed_json)
-            st.success("Данные восстановлены!"); st.rerun()
+    json_file = st.file_uploader("Импорт JSON (полный бэкап)", type=["json"])
+    if json_file and st.button("Применить бэкап"):
+        parsed = storage.loads(json_file.getvalue().decode("utf-8"))
+        if parsed:
+            state.replace_state(parsed)
+            st.success("Загружено!"); st.rerun()
 
 df_stocks = fetch_moex_stocks()
 
