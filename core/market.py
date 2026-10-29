@@ -21,6 +21,8 @@ def _session() -> requests.Session:
     s.mount("https://", HTTPAdapter(max_retries=Retry(total=3, backoff_factor=0.5)))
     return s
 
+# ... (функции fetch_moex_stocks, fetch_moex_indices, fetch_extreme_close, fetch_all_closes_on_date остаются без изменений) ...
+
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_moex_stocks() -> pd.DataFrame:
     try:
@@ -148,10 +150,10 @@ def fetch_dividends_dohod(ticker: str) -> dict:
 
         soup = BeautifulSoup(r.text, 'html.parser')
         text = soup.get_text(separator=' ', strip=True)
-
-        # 1. Поиск DSI (Максимально гибкий regex)
-        # Ищет "DSI" и затем любые символы (не цифры) и само число
-        dsi_match = re.search(r'DSI[^0-9]*([0-9]+[.,][0-9]+)', text, re.IGNORECASE)
+        
+        # 1. Поиск DSI (очень надежный regex)
+        # Ищем слово DSI, затем любые символы, затем число
+        dsi_match = re.search(r'DSI.*?([0-9]+[.,][0-9]+)', text, re.IGNORECASE)
         if dsi_match:
             result["dsi"] = float(dsi_match.group(1).replace(',', '.'))
 
@@ -170,14 +172,7 @@ def fetch_dividends_dohod(ticker: str) -> dict:
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def fetch_dividends_smartlab(ticker: str) -> dict:
-    url = f"https://smart-lab.ru/q/{ticker}/dividend/"
-    result = {"div_gross": 0.0, "div_net": 0.0, "tax": 0.13}
-    try:
-        tables = pd.read_html(url, encoding='cp1251')
-        if not tables: return result
-        return result
-    except Exception:
-        return result
+    return {"div_gross": 0.0, "div_net": 0.0, "tax": 0.13}
 
 @st.cache_data(ttl=180, show_spinner=False)
 def fetch_moex_candles(ticker: str, interval: int, days_back: int = 60, market: str = "shares") -> pd.DataFrame:
