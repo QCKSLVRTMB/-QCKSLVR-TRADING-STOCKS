@@ -95,8 +95,8 @@ def render_rating():
         })
     )
 
-    # Динамический расчет высоты: 35 пикселей на строку + 38 на заголовок
-    table_height = (len(styled_df) + 1) * 35 + 10
+    # Берем длину из display_df, а не из styled_df
+    table_height = (len(display_df) + 1) * 35 + 10
 
     st.dataframe(
         styled_df, 
