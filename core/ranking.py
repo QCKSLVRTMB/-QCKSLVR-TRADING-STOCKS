@@ -1,14 +1,13 @@
 import pandas as pd
-from core.config import DEFAULT_CB_RATE
+from core.market import fetch_extreme_close, fetch_dividends_moex
 
-# Базовый список акций, входящих в IMOEX (для проверки "В составе индекса")
 IMOEX_CONSTITUENTS = {
     "SBER", "GAZP", "LKOH", "ROSN", "NVTK", "TATN", "GMKN", "PLZL", 
     "YNDX", "OZON", "VTBR", "ALRS", "CHMF", "NLMK", "MAGN", "MTSS", 
     "MGNT", "MOEX", "PHOR", "SNGS", "TATNP", "TRNFP", "AFKS", "RTKM"
 }
 
-def calc_ranking(df: pd.DataFrame, state_w_forms: dict, cb_rate: float) -> pd.DataFrame:
+def calc_ranking(df: pd.DataFrame, state_w_forms: dict, cb_rate: float, extreme_date: str, imoex_ext: float, imoex_curr: float) -> pd.DataFrame:
     df = df.copy()
     w_scores = {"вверх": 100, "рейндж": 50, "вниз": 0}
     
@@ -16,18 +15,30 @@ def calc_ranking(df: pd.DataFrame, state_w_forms: dict, cb_rate: float) -> pd.Da
     df["w_form"] = df["SECID"].map(state_w_forms).fillna("-")
     df["score_w"] = df["w_form"].map(w_scores).fillna(0)
     
-    # 2. Выше/ниже индекса (мок для демонстрации)
-    # В реальном коде здесь будет расчет relative_strength
-    df["rel_strength"] = 0.0 
+    # 2. Выше/ниже индекса (Реальный расчет)
+    imoex_chg = (imoex_curr / imoex_ext - 1) if imoex_ext > 0 else 0.0
+    
+    def get_rel_strength(row):
+        ticker = row["SECID"]
+        price_curr = row["PRICE"]
+        if price_curr <= 0: return 0.0
+        
+        price_ext, _ = fetch_extreme_close(ticker, extreme_date, market="shares")
+        if price_ext > 0:
+            stock_chg = (price_curr / price_ext - 1)
+            return (stock_chg - imoex_chg) * 100
+        return 0.0
+        
+    df["rel_strength"] = df.apply(get_rel_strength, axis=1)
     df["score_strength"] = (df["rel_strength"] > 0).astype(int) * 100
     
-    # 3. Дивиденды (мок для демонстрации)
-    df["div_12m"] = 10.0
-    df["div_yield"] = 5.0
+    # 3. Дивиденды (Реальный расчет)
+    df["div_12m"] = df["SECID"].apply(fetch_dividends_moex)
+    df["div_yield"] = df.apply(lambda r: (r["div_12m"] / r["PRICE"] * 100) if r["PRICE"] > 0 else 0.0, axis=1)
     df["score_div"] = df.apply(lambda r: 100 if r["div_yield"] > cb_rate else (50 if r["div_yield"] > 0 else 0), axis=1)
     
     # 4. DSI и Листинг
-    df["dsi"] = 0.50
+    df["dsi"] = 0.50 # Временно, пока не спарсим Smart-Lab
     df["score_dsi"] = df["dsi"] * 100
     list_scores = {1: 100, 2: 70, 3: 40}
     df["score_list"] = df["LISTLEVEL"].map(list_scores).fillna(0)
