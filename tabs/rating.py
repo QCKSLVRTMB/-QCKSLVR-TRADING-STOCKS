@@ -13,14 +13,12 @@ def render_rating():
         st.warning("Нет данных MOEX.")
         return
 
-    # Берем топ-50 по объему
     if "VALTODAY" in df_stocks.columns:
         df_stocks = df_stocks[df_stocks["VALTODAY"] > 0].sort_values("VALTODAY", ascending=False).head(50)
 
     extreme_date = state.g("extreme_date")
     
     with st.spinner("Расчет рейтинга..."):
-        # Один запрос на все цены экстремума
         closes_on_extreme = fetch_all_closes_on_date(extreme_date)
         
         imoex_ext, _ = fetch_extreme_close("IMOEX", extreme_date, market="index")
@@ -30,7 +28,8 @@ def render_rating():
         w_forms = state.g("w_formations")
         cb_rate = state.g("cb_rate")
         
-        df = calc_ranking(df_stocks, w_forms, cb_rate, closes_on_extreme, imoex_ext, imoex_curr)
+        # Передаем extreme_date для точечного fallback
+        df = calc_ranking(df_stocks, w_forms, cb_rate, extreme_date, closes_on_extreme, imoex_ext, imoex_curr)
     
     df = df.sort_values("total_score", ascending=False).reset_index(drop=True)
     df["№"] = df.index + 1
