@@ -13,13 +13,13 @@ def render_rating():
         st.warning("Нет данных MOEX.")
         return
 
-    # Берем топ-50 по объему торгов
+    # Берем топ-30 по объему торгов, чтобы гарантировать быструю загрузку
     if "VALTODAY" in df_stocks.columns:
-        df_stocks = df_stocks[df_stocks["VALTODAY"] > 0].sort_values("VALTODAY", ascending=False).head(50)
+        df_stocks = df_stocks[df_stocks["VALTODAY"] > 0].sort_values("VALTODAY", ascending=False).head(30)
 
     extreme_date = state.g("extreme_date")
     
-    with st.spinner("Расчет рейтинга (загрузка дивидендов и исторических цен)..."):
+    with st.spinner("Расчет рейтинга..."):
         imoex_ext, _ = fetch_extreme_close("IMOEX", extreme_date, market="index")
         imoex_row = df_indices[df_indices['SECID']=='IMOEX']
         imoex_curr = imoex_row['CURRENTVALUE'].values[0] if not imoex_row.empty else 0.0
