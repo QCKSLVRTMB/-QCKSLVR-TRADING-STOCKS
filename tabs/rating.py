@@ -20,7 +20,6 @@ def render_rating():
     
     with st.spinner("Расчет рейтинга..."):
         closes_on_extreme = fetch_all_closes_on_date(extreme_date)
-        
         imoex_ext, _ = fetch_extreme_close("IMOEX", extreme_date, market="index")
         imoex_row = df_indices[df_indices['SECID']=='IMOEX']
         imoex_curr = imoex_row['CURRENTVALUE'].values[0] if not imoex_row.empty else 0.0
@@ -28,30 +27,22 @@ def render_rating():
         w_forms = state.g("w_formations")
         cb_rate = state.g("cb_rate")
         
-        df = calc_ranking(
-            df=df_stocks, 
-            state_w_forms=w_forms, 
-            cb_rate=cb_rate, 
-            closes_on_extreme=closes_on_extreme, 
-            imoex_ext=imoex_ext, 
-            imoex_curr=imoex_curr
-        )
+        df = calc_ranking(df_stocks, w_forms, cb_rate, closes_on_extreme, imoex_ext, imoex_curr)
     
     df = df.sort_values("total_score", ascending=False).reset_index(drop=True)
     df["№"] = df.index + 1
-
-    def safe_color(row):
-        return get_asset_color(row.get("div_yield", 0.0), cb_rate, row.get("rel_strength", 0.0))
 
     display_df = pd.DataFrame({
         "№": df["№"],
         "Название": df["SHORTNAME"],
         "Тикер": df["SECID"],
-        "Вид актива": df.apply(safe_color, axis=1),
+        "Вид актива": df.apply(lambda r: get_asset_color(r["div_yield"], cb_rate, r["rel_strength"]), axis=1),
         "Формация": df["w_form"],
+        "Арсагера": df["ars_group"],
         "В составе индекса": df["in_index"],
         "Сила актива": df["rel_strength"],
         "Дивидендная доходность (по рынку)": df["div_yield"],
+        "DSI": df["dsi"],
         "Тип листинга": df["LISTLEVEL"],
         "Сумма баллов": df["total_score"],
         "Рекомендуемая цена": df["recommended_price"]
@@ -64,11 +55,11 @@ def render_rating():
         elif w == "рейндж": styles[4] = "background-color: #2196F3; color: #2196F3;"
         elif w == "вниз": styles[4] = "background-color: #F44336; color: #F44336;"
         
-        if row["В составе индекса"]: styles[5] = "background-color: #4CAF50; color: #4CAF50;"
-        else: styles[5] = "background-color: #F44336; color: #F44336;"
-        
-        if float(row["Сила актива"]) > 0: styles[6] = "background-color: #4CAF50; color: #4CAF50;"
+        if row["В составе индекса"]: styles[6] = "background-color: #4CAF50; color: #4CAF50;"
         else: styles[6] = "background-color: #F44336; color: #F44336;"
+        
+        if row["Сила актива"] > 0: styles[7] = "background-color: #4CAF50; color: #4CAF50;"
+        else: styles[7] = "background-color: #F44336; color: #F44336;"
         
         color = row["Вид актива"]
         if color == "green": styles[3] = "background-color: #4CAF50; color: #4CAF50;"
@@ -87,6 +78,8 @@ def render_rating():
             "В составе индекса": lambda x: "",
             "Сила актива": lambda x: "",
             "Дивидендная доходность (по рынку)": "{:.2f}%",
+            "Арсагера": "{:.0f}",
+            "DSI": "{:.2f}",
             "Тип листинга": "{:.0f}",
             "Сумма баллов": "{:.0f}",
             "Рекомендуемая цена": "{:.2f} ₽",
@@ -94,4 +87,4 @@ def render_rating():
         })
     )
 
-    st.dataframe(styled_df, width="stretch", hide_index=True)
+    st.dataframe(styled_df, use_container_width=True, hide_index=True)
