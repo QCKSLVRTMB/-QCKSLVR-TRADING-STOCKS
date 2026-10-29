@@ -18,7 +18,7 @@ def render_rating():
 
     extreme_date = state.g("extreme_date")
     
-    with st.spinner("Расчет рейтинга (параллельная загрузка)..."):
+    with st.spinner("Расчет рейтинга..."):
         imoex_ext, _ = fetch_extreme_close("IMOEX", extreme_date, market="index")
         imoex_row = df_indices[df_indices['SECID']=='IMOEX']
         imoex_curr = imoex_row['CURRENTVALUE'].values[0] if not imoex_row.empty else 0.0
