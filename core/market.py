@@ -107,7 +107,6 @@ def fetch_extreme_close(ticker: str, date_val, market: str = "index") -> tuple[f
 
 @st.cache_data(ttl=None, show_spinner=False)
 def fetch_all_closes_on_date(date_val) -> dict[str, float]:
-    """Один запрос для получения цен закрытия всех акций TQBR на заданную дату."""
     try:
         if isinstance(date_val, str):
             d = datetime.strptime(date_val, "%d.%m.%Y")
@@ -134,12 +133,11 @@ def fetch_all_closes_on_date(date_val) -> dict[str, float]:
         hist["TRADEDATE"] = pd.to_datetime(hist["TRADEDATE"])
         hist = hist.sort_values("TRADEDATE").groupby("SECID").last().reset_index()
         return dict(zip(hist["SECID"], hist["CLOSE"]))
-    except Exception as e:
+    except Exception:
         return {}
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def fetch_dividends_dohod(ticker: str) -> dict:
-    """Парсинг dohod.ru через регулярные выражения по тексту страницы."""
     url = f"https://www.dohod.ru/ik/analytics/dividend/{ticker.lower()}"
     result = {"div_12m": 0.0, "dsi": 0.0}
     
@@ -151,19 +149,17 @@ def fetch_dividends_dohod(ticker: str) -> dict:
         soup = BeautifulSoup(r.text, 'html.parser')
         text = soup.get_text(separator=' ', strip=True)
 
-        # 1. Поиск DSI
-        # Ищем паттерн: "индекс DSI" и затем число
-        dsi_match = re.search(r'индекс\s*DSI[^\d]*([0-9]+[.,][0-9]+)', text, re.IGNORECASE)
+        # 1. Поиск DSI (Максимально гибкий regex)
+        # Ищет "DSI" и затем любые символы (не цифры) и само число
+        dsi_match = re.search(r'DSI[^0-9]*([0-9]+[.,][0-9]+)', text, re.IGNORECASE)
         if dsi_match:
             result["dsi"] = float(dsi_match.group(1).replace(',', '.'))
 
         # 2. Поиск суммы дивидендов за 12 месяцев
-        # Ищем "Совокупные дивиденды в следующие 12m: [число]"
         div_match = re.search(r'Совокупные дивиденды в следующие 12m:\s*([0-9]+[.,]?[0-9]*)\s*руб', text, re.IGNORECASE)
         if div_match:
             result["div_12m"] = float(div_match.group(1).replace(',', '.'))
         else:
-            # Запасной вариант: ищем "след 12m. (прогноз) | [число]"
             div_match_alt = re.search(r'след\s*12m\.?\s*\(прогноз\)\s*\|\s*([0-9]+[.,]?[0-9]*)', text, re.IGNORECASE)
             if div_match_alt:
                 result["div_12m"] = float(div_match_alt.group(1).replace(',', '.'))
@@ -174,13 +170,11 @@ def fetch_dividends_dohod(ticker: str) -> dict:
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def fetch_dividends_smartlab(ticker: str) -> dict:
-    """Парсинг Smart-Lab для получения брутто/нетто дивидендов (для портфеля)."""
     url = f"https://smart-lab.ru/q/{ticker}/dividend/"
     result = {"div_gross": 0.0, "div_net": 0.0, "tax": 0.13}
     try:
         tables = pd.read_html(url, encoding='cp1251')
         if not tables: return result
-        # Логика парсинга брутто/нетто будет добавлена позже
         return result
     except Exception:
         return result
