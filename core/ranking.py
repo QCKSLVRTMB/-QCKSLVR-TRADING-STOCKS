@@ -19,19 +19,13 @@ def calc_ranking(df: pd.DataFrame, state_w_forms: dict, cb_rate: float, closes_o
     df["w_form"] = df["SECID"].map(w_forms).fillna("-")
     df["score_w"] = df["w_form"].map(w_scores).fillna(0)
     
-    # 2. Арсагера (жесткая защита от пустых значений в старом профиле)
+    # 2. Арсагера (принудительное слияние)
     user_ars = state.g("arsagera_groups")
     if not isinstance(user_ars, dict): user_ars = {}
     combined_ars = {**DEFAULT_ARSAGERA_GROUPS, **user_ars}
-    
-    def get_ars(ticker):
-        val = combined_ars.get(ticker, 0)
-        if not val or val == 0:
-            val = DEFAULT_ARSAGERA_GROUPS.get(ticker, 0)
-        return val
-
+        
     ars_scores = {1: 100, 2: 75, 3: 50, 4: 25}
-    df["ars_group"] = df["SECID"].apply(get_ars).astype(int)
+    df["ars_group"] = df["SECID"].map(combined_ars).fillna(0).astype(int)
     df["score_arsagera"] = df["ars_group"].map(ars_scores).fillna(0)
     
     # 3. Сила актива
