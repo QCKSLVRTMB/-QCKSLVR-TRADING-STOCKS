@@ -1,7 +1,7 @@
 import pandas as pd
 from core.market import fetch_extreme_close, fetch_dividends_dohod
 from core import state
-from core.config import DEFAULT_ARSAGERA_GROUPS, DEFAULT_W_FORMATIONS
+from core.config import DEFAULT_W_FORMATIONS
 
 IMOEX_CONSTITUENTS = {
     "SBER", "GAZP", "LKOH", "ROSN", "NVTK", "TATN", "GMKN", "PLZL", 
@@ -18,36 +18,20 @@ def calc_ranking(df: pd.DataFrame, state_w_forms: dict, cb_rate: float, closes_o
     df["w_form"] = df["SECID"].map(w_forms).fillna("-")
     df["score_w"] = df["w_form"].map(w_scores).fillna(0)
     
-    # 2. Арсагера и DSI
+    # 2. Арсагера и DSI (строго из загруженного Excel)
     fund_data = state.g("fundamental_data", {})
+    if not isinstance(fund_data, dict): fund_data = {}
     
     def get_ars_score(ticker):
-        # 1. Берем из Excel, если загружен
-        if ticker in fund_data and fund_data[ticker].get("ars_group", 0) > 0:
-            group = fund_data[ticker]["ars_group"]
-            return {1: 100, 2: 75, 3: 50, 4: 25}.get(group, 0)
-        # 2. Иначе берем дефолт из конфига (Лукойл = 1 группа = 100 баллов)
-        group = DEFAULT_ARSAGERA_GROUPS.get(ticker, 0)
+        group = fund_data.get(ticker, {}).get("ars_group", 0)
         return {1: 100, 2: 75, 3: 50, 4: 25}.get(group, 0)
 
-    def get_div_data(ticker):
-        res = fetch_dividends_dohod(ticker)
-        div_12m = res.get("div_12m", 0.0)
-        dsi_dohod = res.get("dsi", 0.0)
-        
-        # Если в Excel есть DSI, он перекрывает значение с dohod.ru
-        if ticker in fund_data:
-            dsi_fund = fund_data[ticker].get("dsi", 0.0)
-            if dsi_fund > 0:
-                dsi_dohod = dsi_fund
-                
-        return div_12m, dsi_dohod
+    def get_dsi_val(ticker):
+        return fund_data.get(ticker, {}).get("dsi", 0.0)
 
-    div_data = df["SECID"].apply(get_div_data)
-    df["div_12m"] = [x[0] for x in div_data]
-    df["dsi"] = [x[1] for x in div_data]
-    
+    df["ars_group"] = df["SECID"].apply(lambda t: fund_data.get(t, {}).get("ars_group", 0))
     df["score_arsagera"] = df["SECID"].apply(get_ars_score)
+    df["dsi"] = df["SECID"].apply(get_dsi_val)
     df["score_dsi"] = df["dsi"].fillna(0).clip(upper=1.0) * 100
     
     # 3. Сила актива
@@ -68,7 +52,12 @@ def calc_ranking(df: pd.DataFrame, state_w_forms: dict, cb_rate: float, closes_o
     df["rel_strength"] = df.apply(get_rel_strength, axis=1)
     df["score_strength"] = (df["rel_strength"] > 0).astype(int) * 100
     
-    # 4. Дивиденды по рынку
+    # 4. Дивиденды (Сумма за 12м)
+    def get_div_12m(ticker):
+        res = fetch_dividends_dohod(ticker)
+        return res.get("div_12m", 0.0)
+
+    df["div_12m"] = df["SECID"].apply(get_div_12m)
     df["div_yield"] = df.apply(lambda r: (r["div_12m"] / r["PRICE"] * 100) if r["PRICE"] > 0 else 0.0, axis=1)
     df["score_div"] = df.apply(lambda r: 100 if r["div_yield"] > cb_rate else (50 if r["div_yield"] > 0 else 0), axis=1)
     
