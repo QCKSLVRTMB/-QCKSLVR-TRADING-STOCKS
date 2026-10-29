@@ -28,17 +28,27 @@ def render_rating():
         w_forms = state.g("w_formations")
         cb_rate = state.g("cb_rate")
         
-        # Передаем extreme_date для точечного fallback
-        df = calc_ranking(df_stocks, w_forms, cb_rate, extreme_date, closes_on_extreme, imoex_ext, imoex_curr)
+        df = calc_ranking(
+            df=df_stocks, 
+            state_w_forms=w_forms, 
+            cb_rate=cb_rate, 
+            closes_on_extreme=closes_on_extreme, 
+            imoex_ext=imoex_ext, 
+            imoex_curr=imoex_curr
+        )
     
     df = df.sort_values("total_score", ascending=False).reset_index(drop=True)
     df["№"] = df.index + 1
+
+    # Безопасный apply для цветов
+    def safe_color(row):
+        return get_asset_color(row.get("div_yield", 0.0), cb_rate, row.get("rel_strength", 0.0))
 
     display_df = pd.DataFrame({
         "№": df["№"],
         "Название": df["SHORTNAME"],
         "Тикер": df["SECID"],
-        "Вид актива": df.apply(lambda r: get_asset_color(r["div_yield"], cb_rate, r["rel_strength"]), axis=1),
+        "Вид актива": df.apply(safe_color, axis=1),
         "Формация": df["w_form"],
         "В составе индекса": df["in_index"],
         "Сила актива": df["rel_strength"],
@@ -58,7 +68,7 @@ def render_rating():
         if row["В составе индекса"]: styles[5] = "background-color: #4CAF50; color: #4CAF50;"
         else: styles[5] = "background-color: #F44336; color: #F44336;"
         
-        if row["Сила актива"] > 0: styles[6] = "background-color: #4CAF50; color: #4CAF50;"
+        if float(row["Сила актива"]) > 0: styles[6] = "background-color: #4CAF50; color: #4CAF50;"
         else: styles[6] = "background-color: #F44336; color: #F44336;"
         
         color = row["Вид актива"]
