@@ -1,9 +1,10 @@
 from __future__ import annotations
 import pandas as pd
+import numpy as np
 import streamlit as st
 
 from core import charts, state
-from core.calc import get_instrument, calculate_volume_profile
+from core.calc import get_instrument, calculate_volume_profile, get_volume_colors
 from core.config import INTERVALS, TOOLS
 from core.market import fetch_moex_candles
 from ui.theme import seg
@@ -120,23 +121,45 @@ def render_trade_planner(ticker: str, df_stocks: pd.DataFrame):
         overlap_pct = st.slider("Порог отсечения кластеров", 10, 100, tdata.get("cluster_threshold", 50), 5, key=f"clu_bins_{ticker}")
         tdata["cluster_threshold"] = int(overlap_pct)
         
+        # 1. Автоматические кластеры от канала
         if show_clusters:
             d1_pts = tdata["charts"]["D1"].get("channel", [])
             if len(d1_pts) == 3:
                 cluster_start_time = pd.to_datetime(d1_pts[2][0])
                 df_m10 = fetch_moex_candles(ticker, interval=10, days_back=60)
                 if not df_m10.empty:
-                    clusters_data = calculate_volume_profile(df_m10.loc[cluster_start_time:], tf_name="M10", threshold_pct=overlap_pct)
+                    # Рассчитываем цвета на полном df_m10 для корректного скользящего среднего
+                    all_colors = get_volume_colors(df_m10, "M10")
+                    mask = df_m10.index >= cluster_start_time
+                    df_slice = df_m10[mask]
+                    colors_slice = np.array(all_colors)[mask]
+                    
+                    if not df_slice.empty:
+                        clusters_data = calculate_volume_profile(df_slice, tf_name="M10", threshold_pct=overlap_pct, colors=colors_slice)
+                        if not clusters_data:
+                            st.caption("В зоне канала нет аномальных объёмов M10.")
 
+        # 2. Ручные кластеры (диапазон)
         if show_custom_clusters:
             cr_pts = tdata["charts"]["D1"].get("cluster_range", [])
             if len(cr_pts) == 2:
                 t1 = pd.to_datetime(cr_pts[0][0])
                 t2 = pd.to_datetime(cr_pts[1][0])
                 t_start, t_end = min(t1, t2), max(t1, t2)
+                
                 df_m10 = fetch_moex_candles(ticker, interval=10, days_back=730)
                 if not df_m10.empty:
-                    custom_clusters_data = calculate_volume_profile(df_m10.loc[t_start:t_end], tf_name="M10", threshold_pct=overlap_pct)
+                    all_colors = get_volume_colors(df_m10, "M10")
+                    mask = (df_m10.index >= t_start) & (df_m10.index <= t_end)
+                    df_slice = df_m10[mask]
+                    colors_slice = np.array(all_colors)[mask]
+                    
+                    if not df_slice.empty:
+                        custom_clusters_data = calculate_volume_profile(df_slice, tf_name="M10", threshold_pct=overlap_pct, colors=colors_slice)
+                        if not custom_clusters_data:
+                            st.caption("В выбранном диапазоне нет аномальных объёмов M10.")
+                    else:
+                        st.caption("Нет M10 данных в выбранном диапазоне дат.")
 
     chart_tabs = st.tabs([cfg["label"] for cfg in INTERVALS.values()])
     for tab, (tf_name, cfg) in zip(chart_tabs, INTERVALS.items()):
