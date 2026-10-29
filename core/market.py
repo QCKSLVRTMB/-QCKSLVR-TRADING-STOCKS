@@ -146,47 +146,23 @@ def fetch_dividends_dohod(ticker: str) -> dict:
         if r.status_code != 200:
             return result
 
-        # 1. Попытка через Pandas read_html
-        try:
-            tables = pd.read_html(r.text)
-            for df in tables:
-                if 'DSI' in df.columns and 'Период' in df.columns:
-                    for _, row in df.iterrows():
-                        if "12м" in str(row['Период']):
-                            try:
-                                result["div_12m"] = float(str(row['Выплата на акцию (прогноз)']).replace(' ', '').replace(',', '.'))
-                            except: pass
-                            try:
-                                d_val = float(str(row['DSI']).replace(',', '.'))
-                                if 0 <= d_val <= 1: result["dsi"] = d_val
-                            except: pass
-                            return result
-        except Exception:
-            pass
-
-        # 2. Резервный парсер через BeautifulSoup (если Pandas не справился)
         soup = BeautifulSoup(r.text, 'html.parser')
-        table = None
-        for t in soup.find_all('table'):
-            if t.find('th', string=re.compile('DSI')):
-                table = t
-                break
-        
-        if table:
-            tbody = table.find('tbody')
-            if tbody:
-                for row in tbody.find_all('tr'):
-                    cells = row.find_all('td')
-                    if len(cells) >= 12: 
-                        period = cells[2].get_text(strip=True)
-                        if "всего 12м" in period or "12м" in period:
-                            try:
-                                result["div_12m"] = float(cells[3].get_text(strip=True).replace(' ', '').replace(',', '.'))
-                            except: pass
-                            try:
-                                result["dsi"] = float(cells[-1].get_text(strip=True).replace(',', '.'))
-                            except: pass
-                            return result
+        text = soup.get_text(separator=' ', strip=True)
+
+        # 1. Поиск DSI (ищем "индекс DSI" и берем первое число после него)
+        dsi_match = re.search(r'индекс\s*DSI[^0-9]*([0-9]+[.,][0-9]+)', text, re.IGNORECASE)
+        if dsi_match:
+            result["dsi"] = float(dsi_match.group(1).replace(',', '.'))
+        else:
+            # Резервный вариант: ищем просто "DSI" и число
+            dsi_match_alt = re.search(r'DSI[^0-9]*([0-9]+[.,][0-9]+)', text, re.IGNORECASE)
+            if dsi_match_alt:
+                result["dsi"] = float(dsi_match_alt.group(1).replace(',', '.'))
+
+        # 2. Поиск суммы дивидендов за 12 месяцев
+        div_match = re.search(r'Совокупные дивиденды в следующие 12m:\s*([0-9]+[.,]?[0-9]*)\s*руб', text, re.IGNORECASE)
+        if div_match:
+            result["div_12m"] = float(div_match.group(1).replace(',', '.'))
 
         return result
     except Exception:
