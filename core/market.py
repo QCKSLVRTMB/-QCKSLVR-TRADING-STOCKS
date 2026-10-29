@@ -11,6 +11,7 @@ ISS_SHARES = "https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/
 ISS_INDICES = "https://iss.moex.com/iss/engines/stock/markets/index/securities.json?iss.meta=off&iss.only=securities,marketdata"
 ISS_CANDLES = "https://iss.moex.com/iss/engines/stock/markets/{market}/securities/{ticker}/candles.json"
 ISS_HISTORY = "https://iss.moex.com/iss/history/engines/stock/markets/{market}/securities/{ticker}.json"
+ISS_DIVIDENDS = "https://iss.moex.com/iss/securities/{ticker}/dividends.json?iss.meta=off"
 
 @st.cache_resource(show_spinner=False)
 def _session() -> requests.Session:
@@ -43,7 +44,6 @@ def fetch_moex_stocks() -> pd.DataFrame:
         
     df["PRICE"] = df["LAST"].where(df["LAST"] > 0, df["PREVPRICE"])
     df["LOT_VALUE"] = df["PRICE"] * df["LOTSIZE"]
-    df["CAPITALIZATION"] = df["PRICE"] * df["ISSUESIZE"]
     return df
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -70,7 +70,7 @@ def fetch_moex_indices() -> pd.DataFrame:
     return df
 
 @st.cache_data(ttl=None, show_spinner=False)
-def fetch_extreme_close(index_ticker: str, date_val) -> tuple[float, str]:
+def fetch_extreme_close(ticker: str, date_val, market: str = "index") -> tuple[float, str]:
     try:
         if isinstance(date_val, str):
             d = datetime.strptime(date_val, "%d.%m.%Y")
@@ -89,7 +89,11 @@ def fetch_extreme_close(index_ticker: str, date_val) -> tuple[float, str]:
     if friday > today: friday = today
 
     frm, till = monday.strftime("%Y-%m-%d"), friday.strftime("%Y-%m-%d")
-    url = ISS_HISTORY.format(market="index", ticker=index_ticker)
+    
+    if market == "index":
+        url = ISS_HISTORY.format(market="index", ticker=ticker)
+    else:
+        url = f"https://iss.moex.com/iss/history/engines/stock/markets/shares/boards/TQBR/securities/{ticker}.json"
     
     try:
         r = _session().get(url, params={"from": frm, "till": till, "iss.meta": "off"}, timeout=10)
@@ -100,13 +104,39 @@ def fetch_extreme_close(index_ticker: str, date_val) -> tuple[float, str]:
     except Exception:
         return 0.0, "-"
 
+@st.cache_data(ttl=86400, show_spinner=False)
+def fetch_dividends_moex(ticker: str) -> float:
+    """Суммирует дивиденды за последние 12 месяцев, отсекая будущие даты."""
+    url = ISS_DIVIDENDS.format(ticker=ticker)
+    try:
+        r = _session().get(url, timeout=10)
+        data = r.json().get("dividends", {}).get("data", [])
+        if not data: return 0.0
+        
+        today = datetime.now().date()
+        one_year_ago = today - timedelta(days=365)
+        total_div = 0.0
+        
+        for row in data:
+            # row[1] - дата закрытия реестра, row[2] - сумма дивиденда
+            reg_date_str = row[1]
+            if reg_date_str:
+                try:
+                    reg_date = datetime.strptime(reg_date_str, "%Y-%m-%d").date()
+                    if one_year_ago <= reg_date <= today:
+                        total_div += float(row[2])
+                except:
+                    pass
+        return total_div
+    except Exception:
+        return 0.0
+
 @st.cache_data(ttl=180, show_spinner=False)
 def fetch_moex_candles(ticker: str, interval: int, days_back: int = 60, market: str = "shares") -> pd.DataFrame:
     frm = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
     till = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
     url = ISS_CANDLES.format(market=market, ticker=ticker)
     
-    # ВОССТАНОВЛЕНА ПАГИНАЦИЯ
     chunks, start = [], 0
     for _ in range(30):
         try:
