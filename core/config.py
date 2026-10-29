@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 5
 APP_TITLE = "Калькулятор акций MOEX"
 
 TREND_VALUES = ["вверх", "вниз", "рейндж"]
@@ -54,12 +54,6 @@ DEFAULT_W_FORMATIONS = {
     "ROSN": "вниз", "NVTK": "вверх", "SIBN": "вверх", "TRNFP": "вверх"
 }
 
-# Дефолтные данные на случай, если файл не загружен
-DEFAULT_ARSAGERA_GROUPS = {
-    "LKOH": 1, "SBER": 1, "GAZP": 1, "ROSN": 1, "TATN": 1, "NVTK": 1,
-    "CHMF": 1, "NLMK": 1, "MAGN": 1, "PLZL": 1, "MTSS": 1, "MOEX": 1
-}
-
 DEFAULT_GLOBAL = {
     "extreme_date": DEFAULT_EXTREME_DATE,
     "cb_rate": DEFAULT_CB_RATE,
@@ -69,8 +63,7 @@ DEFAULT_GLOBAL = {
     "mobile_view": False,
     "active_tickers": [],
     "w_formations": DEFAULT_W_FORMATIONS,
-    "arsagera_groups": DEFAULT_ARSAGERA_GROUPS,
-    "dohod_data": {}, # Сюда сохранятся данные из Excel
+    "fundamental_data": {}, # Только из Excel
     "sector_weights": {"Нефтегаз": 35, "Финансы": 25, "Металлы": 30, "Разное": 10},
     "portfolio_data": [] 
 }
