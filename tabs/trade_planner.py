@@ -13,7 +13,6 @@ def render_trade_planner(ticker: str, df_stocks: pd.DataFrame):
 
     st.subheader(f"{ticker} — {inst.name} (Лот: {inst.lot_size})")
     
-    # Уровни
     c1, c2 = st.columns(2)
     with c1:
         buy_level = st.number_input("Уровень покупок (SL)", value=float(tdata.get("buy_level", 0.0)), format="%.2f")
@@ -23,7 +22,6 @@ def render_trade_planner(ticker: str, df_stocks: pd.DataFrame):
     tdata["buy_level"] = buy_level
     tdata["sell_level"] = sell_level
 
-    # Таблица усреднения
     st.markdown("#### Расчет усреднения (ТВХ)")
     if "entries" not in tdata: tdata["entries"] = []
     
@@ -33,7 +31,12 @@ def render_trade_planner(ticker: str, df_stocks: pd.DataFrame):
     for e in tdata["entries"]:
         rows.append({"Цена": e["price"], "Лотов": e["qty"], "Комментарий": e.get("note", ""), "Lock": False})
         
-    df = pd.DataFrame(rows)
+    # Создаем пустой каркас, чтобы st.data_editor не терял колонки
+    if not rows:
+        df = pd.DataFrame(columns=["Цена", "Лотов", "Комментарий", "Lock"])
+    else:
+        df = pd.DataFrame(rows)
+        
     edited = st.data_editor(
         df, num_rows="dynamic", use_container_width=True, hide_index=True,
         column_config={
@@ -45,23 +48,23 @@ def render_trade_planner(ticker: str, df_stocks: pd.DataFrame):
         disabled=["Цена", "Лотов"] if port_data else []
     )
     
-    # Сохраняем обратно (исключая заблокированные)
-    tdata["entries"] = [{"price": r["Цена"], "qty": int(r["Лотов"]), "note": r["Комментарий"]} for _, r in edited.iterrows() if not r.get("Lock", False)]
+    # Безопасное обновление entries (предотвращает KeyError)
+    if not edited.empty and "Цена" in edited.columns and "Лотов" in edited.columns:
+        tdata["entries"] = [{"price": r["Цена"], "qty": int(r["Лотов"]), "note": r["Комментарий"]} for _, r in edited.iterrows() if not r.get("Lock", False)]
 
-    # Метрики
-    total_lots = edited["Лотов"].sum()
-    total_cost = (edited["Цена"] * edited["Лотов"] * inst.lot_size).sum()
-    
-    if total_lots > 0:
-        avg_price = total_cost / (total_lots * inst.lot_size)
-        st.metric("Средняя цена (ТВХ)", f"{avg_price:.2f} ₽")
+        # Метрики
+        total_lots = edited["Лотов"].sum()
+        total_cost = (edited["Цена"] * edited["Лотов"] * inst.lot_size).sum()
         
-        if sell_level > 0:
-            st.metric("Доходность до продажи", f"{(sell_level / avg_price - 1) * 100:.2f}%")
-        if buy_level > 0:
-            st.metric("Риск до покупки", f"{(1 - buy_level / avg_price) * 100:.2f}%")
+        if total_lots > 0:
+            avg_price = total_cost / (total_lots * inst.lot_size)
+            st.metric("Средняя цена (ТВХ)", f"{avg_price:.2f} ₽")
+            
+            if sell_level > 0:
+                st.metric("Доходность до продажи", f"{(sell_level / avg_price - 1) * 100:.2f}%")
+            if buy_level > 0:
+                st.metric("Риск до покупки", f"{(1 - buy_level / avg_price) * 100:.2f}%")
 
-    # График (упрощенно для примера, используется логика charts.py)
     st.markdown("#### График")
     df_candles = fetch_moex_candles(ticker, interval=24)
     if not df_candles.empty:
