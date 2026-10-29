@@ -12,16 +12,17 @@ IMOEX_CONSTITUENTS = {
 def calc_ranking(df: pd.DataFrame, state_w_forms: dict, cb_rate: float, closes_on_extreme: dict, imoex_ext: float, imoex_curr: float) -> pd.DataFrame:
     df = df.copy()
     
-    # 1. W-формация
-    w_forms = state_w_forms if state_w_forms else DEFAULT_W_FORMATIONS
+    # 1. W-формация (Защита от None)
+    user_w = state_w_forms if isinstance(state_w_forms, dict) else {}
+    w_forms = {**DEFAULT_W_FORMATIONS, **user_w}
     w_scores = {"вверх": 100, "рейндж": 50, "вниз": 0}
     df["w_form"] = df["SECID"].map(w_forms).fillna("-")
     df["score_w"] = df["w_form"].map(w_scores).fillna(0)
     
-    # 2. Арсагера (ПРИНУДИТЕЛЬНОЕ СЛИЯНИЕ)
-    arsagera_groups = state.g("arsagera_groups")
-    if not isinstance(arsagera_groups, dict): arsagera_groups = {}
-    combined_ars = {**DEFAULT_ARSAGERA_GROUPS, **arsagera_groups}
+    # 2. Арсагера (Защита от None)
+    user_ars = state.g("arsagera_groups")
+    if not isinstance(user_ars, dict): user_ars = {}
+    combined_ars = {**DEFAULT_ARSAGERA_GROUPS, **user_ars}
         
     ars_scores = {1: 100, 2: 75, 3: 50, 4: 25}
     df["ars_group"] = df["SECID"].map(combined_ars).fillna(0).astype(int)
@@ -58,7 +59,7 @@ def calc_ranking(df: pd.DataFrame, state_w_forms: dict, cb_rate: float, closes_o
     # 5. Выплаты
     df["score_paid_12m"] = (df["div_12m"] > 0).astype(int) * 100
     
-    # 6. DSI (жесткая защита от выбросов)
+    # 6. DSI (жесткая защита)
     df["dsi"] = df["dsi"].clip(upper=1.0)
     df["score_dsi"] = df["dsi"].fillna(0) * 100
     
@@ -76,7 +77,6 @@ def calc_ranking(df: pd.DataFrame, state_w_forms: dict, cb_rate: float, closes_o
         axis=1
     )
 
-    # Строгий подсчет всех 8 столбцов
     score_cols = [
         "score_w", "score_arsagera", "score_strength", 
         "score_div", "score_paid_12m", "score_dsi", 
