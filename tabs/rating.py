@@ -1,26 +1,34 @@
 import streamlit as st
 import pandas as pd
-from core.market import fetch_moex_stocks
+from core.market import fetch_moex_stocks, fetch_moex_indices, fetch_extreme_close
 from core.ranking import calc_ranking, get_asset_color
 from core import state
 
 def render_rating():
     st.subheader("Рейтинг акций")
     df_stocks = fetch_moex_stocks()
-    if df_stocks.empty:
+    df_indices = fetch_moex_indices()
+    
+    if df_stocks.empty or df_indices.empty:
         st.warning("Нет данных MOEX.")
         return
         
+    # Получаем данные IMOEX для расчета силы
+    extreme_date = state.g("extreme_date")
+    imoex_ext, _ = fetch_extreme_close("IMOEX", extreme_date, market="index")
+    imoex_row = df_indices[df_indices['SECID']=='IMOEX']
+    imoex_curr = imoex_row['CURRENTVALUE'].values[0] if not imoex_row.empty else 0.0
+
     w_forms = state.g("w_formations")
     cb_rate = state.g("cb_rate")
     
-    df = calc_ranking(df_stocks, w_forms, cb_rate)
+    # Считаем рейтинг
+    df = calc_ranking(df_stocks, w_forms, cb_rate, extreme_date, imoex_ext, imoex_curr)
     
-    # Сортировка по убыванию суммы баллов
+    # Сортировка
     df = df.sort_values("total_score", ascending=False).reset_index(drop=True)
     df["№"] = df.index + 1
 
-    # Формируем датафрейм для отображения в строго заданном порядке
     display_df = pd.DataFrame({
         "№": df["№"],
         "Название": df["SHORTNAME"],
@@ -35,34 +43,27 @@ def render_rating():
         "Рекомендуемая цена": df["recommended_price"]
     })
 
-    # Функция стилизации (заливка цветом)
     def apply_styles(row):
         styles = [""] * len(row)
-        
-        # Формация (индекс 4)
+        # Формация
         w = row["Формация"]
         if w == "вверх": styles[4] = "background-color: #4CAF50; color: #4CAF50;"
         elif w == "рейндж": styles[4] = "background-color: #2196F3; color: #2196F3;"
         elif w == "вниз": styles[4] = "background-color: #F44336; color: #F44336;"
-
-        # В составе индекса (индекс 5)
+        # В составе индекса
         if row["В составе индекса"]: styles[5] = "background-color: #4CAF50; color: #4CAF50;"
         else: styles[5] = "background-color: #F44336; color: #F44336;"
-
-        # Сила актива (индекс 6)
+        # Сила актива
         if row["Сила актива"] > 0: styles[6] = "background-color: #4CAF50; color: #4CAF50;"
         else: styles[6] = "background-color: #F44336; color: #F44336;"
-
-        # Вид актива (индекс 3)
+        # Вид актива
         color = row["Вид актива"]
         if color == "green": styles[3] = "background-color: #4CAF50; color: #4CAF50;"
         elif color == "yellow": styles[3] = "background-color: #FFEB3B; color: #FFEB3B;"
         elif color == "orange": styles[3] = "background-color: #FF9800; color: #FF9800;"
         elif color == "red": styles[3] = "background-color: #F44336; color: #F44336;"
-
         return styles
 
-    # Применяем стили и форматирование (скрываем текст в цветных ячейках)
     styled_df = (
         display_df.style
         .apply(apply_styles, axis=1)
@@ -79,16 +80,4 @@ def render_rating():
         })
     )
 
-    st.dataframe(
-        styled_df,
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "Вид актива": st.column_config.TextColumn(width="small"),
-            "Формация": st.column_config.TextColumn(width="small"),
-            "В составе индекса": st.column_config.TextColumn(width="small"),
-            "Сила актива": st.column_config.TextColumn(width="small"),
-            "Дивидендная доходность (по рынку)": st.column_config.TextColumn(width="medium"),
-            "Рекомендуемая цена": st.column_config.TextColumn(width="medium"),
-        }
-    )
+    st.dataframe(styled_df, use_container_width=True, hide_index=True)
