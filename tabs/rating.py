@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 from core.market import fetch_moex_stocks, fetch_moex_indices, fetch_extreme_close, fetch_all_closes_on_date
-from core.ranking import calc_ranking, get_asset_color
+from core.ranking import calc_ranking, get_asset_color, get_whitelist
 from core import state
 
 def render_rating():
@@ -13,13 +13,20 @@ def render_rating():
         st.warning("Нет данных MOEX.")
         return
 
-    # Фильтруем только те, по которым были торги (убираем мусорные тикеры)
-    if "VALTODAY" in df_stocks.columns:
-        df_stocks = df_stocks[df_stocks["VALTODAY"] > 0]
+    ars_data = state.g("arsagera_groups", {})
+    dohod_data = state.g("dohod_data", {})
+    
+    if not dohod_data and not ars_data:
+        st.warning("Пожалуйста, загрузите файл 'Источники.xlsx' в боковом меню для формирования рейтинга.")
+        return
+
+    # Фильтруем акции: оставляем только те, что есть в Арсагере или в Dohod
+    whitelist = get_whitelist(df_stocks, ars_data, dohod_data)
+    df_stocks = df_stocks[df_stocks["SECID"].isin(whitelist)]
 
     extreme_date = state.g("extreme_date")
     
-    with st.spinner("Расчет рейтинга по всем активам рынка..."):
+    with st.spinner("Расчет рейтинга по выбранным активам..."):
         closes_on_extreme = fetch_all_closes_on_date(extreme_date)
         imoex_ext, _ = fetch_extreme_close("IMOEX", extreme_date, market="index")
         imoex_row = df_indices[df_indices['SECID']=='IMOEX']
