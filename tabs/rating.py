@@ -13,13 +13,12 @@ def render_rating():
         st.warning("Нет данных MOEX.")
         return
 
-    # Берем топ-50 по объему торгов, чтобы не превышать лимиты API и не ждать минуту
+    # Берем топ-50 по объему торгов
     if "VALTODAY" in df_stocks.columns:
         df_stocks = df_stocks[df_stocks["VALTODAY"] > 0].sort_values("VALTODAY", ascending=False).head(50)
 
     extreme_date = state.g("extreme_date")
     
-    # Спиннер, чтобы пользователь видел, что идет расчет
     with st.spinner("Расчет рейтинга (загрузка дивидендов и исторических цен)..."):
         imoex_ext, _ = fetch_extreme_close("IMOEX", extreme_date, market="index")
         imoex_row = df_indices[df_indices['SECID']=='IMOEX']
@@ -49,21 +48,17 @@ def render_rating():
 
     def apply_styles(row):
         styles = [""] * len(row)
-        # Формация
         w = row["Формация"]
         if w == "вверх": styles[4] = "background-color: #4CAF50; color: #4CAF50;"
         elif w == "рейндж": styles[4] = "background-color: #2196F3; color: #2196F3;"
         elif w == "вниз": styles[4] = "background-color: #F44336; color: #F44336;"
         
-        # В составе индекса
         if row["В составе индекса"]: styles[5] = "background-color: #4CAF50; color: #4CAF50;"
         else: styles[5] = "background-color: #F44336; color: #F44336;"
         
-        # Сила актива
         if row["Сила актива"] > 0: styles[6] = "background-color: #4CAF50; color: #4CAF50;"
         else: styles[6] = "background-color: #F44336; color: #F44336;"
         
-        # Вид актива
         color = row["Вид актива"]
         if color == "green": styles[3] = "background-color: #4CAF50; color: #4CAF50;"
         elif color == "yellow": styles[3] = "background-color: #FFEB3B; color: #FFEB3B;"
