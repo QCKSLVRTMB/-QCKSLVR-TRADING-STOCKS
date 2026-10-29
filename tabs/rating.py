@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 from core.market import fetch_moex_stocks, fetch_moex_indices, fetch_extreme_close, fetch_all_closes_on_date
-from core.ranking import calc_ranking, get_asset_color, get_whitelist
+from core.ranking import calc_ranking, get_asset_color
 from core import state
 
 def render_rating():
@@ -13,20 +13,15 @@ def render_rating():
         st.warning("Нет данных MOEX.")
         return
 
-    ars_data = state.g("arsagera_groups", {})
-    dohod_data = state.g("dohod_data", {})
-    
-    if not dohod_data and not ars_data:
-        st.warning("Пожалуйста, загрузите файл 'Источники.xlsx' в боковом меню для формирования рейтинга.")
-        return
-
-    whitelist = get_whitelist(df_stocks, ars_data, dohod_data)
-    df_stocks = df_stocks[df_stocks["SECID"].isin(whitelist)]
+    # Берем топ-50 по объему
+    if "VALTODAY" in df_stocks.columns:
+        df_stocks = df_stocks[df_stocks["VALTODAY"] > 0].sort_values("VALTODAY", ascending=False).head(50)
 
     extreme_date = state.g("extreme_date")
     
-    with st.spinner("Расчет рейтинга по выбранным активам..."):
+    with st.spinner("Расчет рейтинга..."):
         closes_on_extreme = fetch_all_closes_on_date(extreme_date)
+        
         imoex_ext, _ = fetch_extreme_close("IMOEX", extreme_date, market="index")
         imoex_row = df_indices[df_indices['SECID']=='IMOEX']
         imoex_curr = imoex_row['CURRENTVALUE'].values[0] if not imoex_row.empty else 0.0
@@ -45,11 +40,9 @@ def render_rating():
         "Тикер": df["SECID"],
         "Вид актива": df.apply(lambda r: get_asset_color(r["div_yield"], cb_rate, r["rel_strength"]), axis=1),
         "Формация": df["w_form"],
-        "Арсагера": df["ars_group"],
         "В составе индекса": df["in_index"],
         "Сила актива": df["rel_strength"],
         "Дивидендная доходность (по рынку)": df["div_yield"],
-        "DSI": df["dsi"],
         "Тип листинга": df["LISTLEVEL"],
         "Сумма баллов": df["total_score"],
         "Рекомендуемая цена": df["recommended_price"]
@@ -57,17 +50,22 @@ def render_rating():
 
     def apply_styles(row):
         styles = [""] * len(row)
+        
+        # Формация
         w = row["Формация"]
         if w == "вверх": styles[4] = "background-color: #4CAF50; color: #4CAF50;"
         elif w == "рейндж": styles[4] = "background-color: #2196F3; color: #2196F3;"
         elif w == "вниз": styles[4] = "background-color: #F44336; color: #F44336;"
         
-        if row["В составе индекса"]: styles[6] = "background-color: #4CAF50; color: #4CAF50;"
-        else: styles[6] = "background-color: #F44336; color: #F44336;"
+        # В составе индекса
+        if row["В составе индекса"]: styles[5] = "background-color: #4CAF50; color: #4CAF50;"
+        else: styles[5] = "background-color: #F44336; color: #F44336;"
         
-        if row["Сила актива"] > 0: styles[7] = "background-color: #4CAF50; color: #4CAF50;"
-        else: styles[7] = "background-color: #F44336; color: #F44336;"
+        # Сила актива (текст белый, чтобы было видно число)
+        if row["Сила актива"] > 0: styles[6] = "background-color: #4CAF50; color: white;"
+        else: styles[6] = "background-color: #F44336; color: white;"
         
+        # Вид актива
         color = row["Вид актива"]
         if color == "green": styles[3] = "background-color: #4CAF50; color: #4CAF50;"
         elif color == "yellow": styles[3] = "background-color: #FFEB3B; color: #FFEB3B;"
@@ -83,10 +81,8 @@ def render_rating():
             "Вид актива": lambda x: "",
             "Формация": lambda x: "",
             "В составе индекса": lambda x: "",
-            "Сила актива": "{:+.2f}%", # Добавлен знак плюс
+            "Сила актива": "{:+.2f}%",
             "Дивидендная доходность (по рынку)": "{:.2f}%",
-            "Арсагера": "{:.0f}",
-            "DSI": "{:.2f}",
             "Тип листинга": "{:.0f}",
             "Сумма баллов": "{:.0f}",
             "Рекомендуемая цена": "{:.2f} ₽",
@@ -94,11 +90,4 @@ def render_rating():
         })
     )
 
-    table_height = (len(display_df) + 1) * 35 + 10
-
-    st.dataframe(
-        styled_df, 
-        use_container_width=True, 
-        hide_index=True,
-        height=table_height
-    )
+    st.dataframe(styled_df, use_container_width=True, hide_index=True)
