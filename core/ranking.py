@@ -1,7 +1,6 @@
 import pandas as pd
 from core.market import fetch_extreme_close, fetch_dividends_dohod
 from core import state
-from core.config import DEFAULT_ARSAGERA_GROUPS
 
 IMOEX_CONSTITUENTS = {
     "SBER", "GAZP", "LKOH", "ROSN", "NVTK", "TATN", "GMKN", "PLZL", 
@@ -9,22 +8,21 @@ IMOEX_CONSTITUENTS = {
     "MGNT", "MOEX", "PHOR", "SNGS", "TATNP", "TRNFP", "AFKS", "RTKM"
 }
 
-def calc_ranking(df: pd.DataFrame, state_w_forms: dict, cb_rate: float, extreme_date: str, closes_on_extreme: dict, imoex_ext: float, imoex_curr: float) -> pd.DataFrame:
+def calc_ranking(df: pd.DataFrame, state_w_forms: dict, cb_rate: float, closes_on_extreme: dict, imoex_ext: float, imoex_curr: float) -> pd.DataFrame:
     df = df.copy()
     
-    # 1. W-формация (до 100)
+    # 1. W-формация
     w_scores = {"вверх": 100, "рейндж": 50, "вниз": 0}
     df["w_form"] = df["SECID"].map(state_w_forms).fillna("-")
     df["score_w"] = df["w_form"].map(w_scores).fillna(0)
     
-    # 2. Рейтинг Арсагера (до 100)
-    # Берем из стейта, если пусто - из дефолта
-    arsagera_groups = state.g("arsagera_groups") or DEFAULT_ARSAGERA_GROUPS
+    # 2. Арсагера
+    arsagera_groups = state.g("arsagera_groups", {})
     ars_scores = {1: 100, 2: 75, 3: 50, 4: 25}
     df["ars_group"] = df["SECID"].map(arsagera_groups).fillna(0).astype(int)
     df["score_arsagera"] = df["ars_group"].map(ars_scores).fillna(0)
     
-    # 3. Выше/ниже индекса (до 100)
+    # 3. Сила актива
     imoex_chg = (imoex_curr / imoex_ext - 1) if imoex_ext > 0 else 0.0
     
     def get_rel_strength(row):
@@ -32,10 +30,6 @@ def calc_ranking(df: pd.DataFrame, state_w_forms: dict, cb_rate: float, extreme_
         price_curr = row["PRICE"]
         price_ext = closes_on_extreme.get(ticker, 0.0)
         
-        # ПРЕДОХРАНИТЕЛЬ: Если акции нет в общем списке (уперлись в лимит 1000), запрашиваем точечно
-        if price_ext == 0.0:
-            price_ext, _ = fetch_extreme_close(ticker, extreme_date, market="shares")
-            
         if price_curr > 0 and price_ext > 0:
             stock_chg = (price_curr / price_ext - 1)
             return (stock_chg - imoex_chg) * 100
@@ -44,7 +38,7 @@ def calc_ranking(df: pd.DataFrame, state_w_forms: dict, cb_rate: float, extreme_
     df["rel_strength"] = df.apply(get_rel_strength, axis=1)
     df["score_strength"] = (df["rel_strength"] > 0).astype(int) * 100
     
-    # 4. Дивиденды по рынку (до 100)
+    # 4. Дивиденды
     def get_div_data(ticker):
         res = fetch_dividends_dohod(ticker)
         return res.get("div_12m", 0.0), res.get("dsi", 0.0)
@@ -56,17 +50,17 @@ def calc_ranking(df: pd.DataFrame, state_w_forms: dict, cb_rate: float, extreme_
     df["div_yield"] = df.apply(lambda r: (r["div_12m"] / r["PRICE"] * 100) if r["PRICE"] > 0 else 0.0, axis=1)
     df["score_div"] = df.apply(lambda r: 100 if r["div_yield"] > cb_rate else (50 if r["div_yield"] > 0 else 0), axis=1)
     
-    # 5. Выплачено за 12 месяцев (до 100)
+    # 5. Выплаты
     df["score_paid_12m"] = (df["div_12m"] > 0).astype(int) * 100
     
-    # 6. DSI (до 100)
-    df["score_dsi"] = df["dsi"] * 100
+    # 6. DSI (с защитой от NaN)
+    df["score_dsi"] = df["dsi"].fillna(0) * 100
     
-    # 7. Тип листинга (до 100)
+    # 7. Листинг
     list_scores = {1: 100, 2: 70, 3: 40}
     df["score_list"] = df["LISTLEVEL"].map(list_scores).fillna(0)
     
-    # 8. В составе индекса (до 100)
+    # 8. Индекс
     df["in_index"] = df["SECID"].isin(IMOEX_CONSTITUENTS)
     df["score_in_index"] = df["in_index"].astype(int) * 100
     
@@ -76,7 +70,7 @@ def calc_ranking(df: pd.DataFrame, state_w_forms: dict, cb_rate: float, extreme_
         axis=1
     )
 
-    # Итоговая сумма баллов (8 компонентов, максимум 800)
+    # Итог (8 компонентов)
     score_cols = [
         "score_w", 
         "score_arsagera",
