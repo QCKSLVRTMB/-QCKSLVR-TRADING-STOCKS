@@ -6,7 +6,7 @@ from core import charts, state
 from core.calc import get_instrument, calculate_volume_profile
 from core.config import INTERVALS, TOOLS
 from core.market import fetch_moex_candles
-from ui.theme import seg, kv_data, money, num
+from ui.theme import seg
 
 def snap_points(pts, df):
     if not pts or df.empty: return pts
@@ -25,7 +25,7 @@ def snap_points(pts, df):
         
         if len(matching_indices) > 0:
             idx = matching_indices.get_indexer([t], method='nearest')[0]
-            snapped.append([str(matching_indices[idx]), p_val])
+            snapped.append([str(matching_indices[idx]), float(p_val)])
         else:
             idx = df.index.get_indexer([t], method='nearest')[0]
             if idx >= 0:
@@ -36,9 +36,9 @@ def snap_points(pts, df):
                 sub_df = df.iloc[start:end+1]
                 if is_high: exact_idx = (sub_df['High'] - p_val).abs().idxmin()
                 else: exact_idx = (sub_df['Low'] - p_val).abs().idxmin()
-                snapped.append([str(exact_idx), p_val])
+                snapped.append([str(exact_idx), float(p_val)])
             else:
-                snapped.append([p_str, p_val])
+                snapped.append([str(p_str), float(p_val)])
     return snapped
 
 def render_trade_planner(ticker: str, df_stocks: pd.DataFrame):
@@ -46,7 +46,6 @@ def render_trade_planner(ticker: str, df_stocks: pd.DataFrame):
     tdata = state.ticker(ticker)
     mobile = state.g("mobile_view")
     
-    # Заголовок
     st.subheader(f"{ticker} — {inst.name}")
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Цена", f"{inst.price:.2f} ₽", f"{inst.change_pct:+.2f}%" if hasattr(inst, 'change_pct') else None)
@@ -54,17 +53,15 @@ def render_trade_planner(ticker: str, df_stocks: pd.DataFrame):
     c3.metric("Стоимость лота", f"{inst.lot_value:.2f} ₽")
     c4.metric("Листинг", f"{inst.list_level} ур.")
 
-    # Параметры сделки
     st.markdown("#### Параметры сделки")
     c_sl, c_tp = st.columns(2)
     with c_sl:
         buy_level = st.number_input("Уровень покупок (SL)", value=float(tdata.get("buy_level") or 0.0), step=float(inst.min_step), format=f"%.{inst.decimals}f", key=f"buy_{ticker}")
-        tdata["buy_level"] = buy_level if buy_level > 0 else None
+        tdata["buy_level"] = float(buy_level) if buy_level > 0 else None
     with c_tp:
         sell_level = st.number_input("Уровень продаж (TP)", value=float(tdata.get("sell_level") or 0.0), step=float(inst.min_step), format=f"%.{inst.decimals}f", key=f"sell_{ticker}")
-        tdata["sell_level"] = sell_level if sell_level > 0 else None
+        tdata["sell_level"] = float(sell_level) if sell_level > 0 else None
 
-    # Расчет усреднения
     st.markdown("#### Расчет усреднения (ТВХ)")
     if "entries" not in tdata: tdata["entries"] = []
     
@@ -89,7 +86,10 @@ def render_trade_planner(ticker: str, df_stocks: pd.DataFrame):
     )
     
     if not edited.empty and "Цена" in edited.columns and "Лотов" in edited.columns:
-        tdata["entries"] = [{"price": r["Цена"], "qty": int(r["Лотов"]), "note": r["Комментарий"]} for _, r in edited.iterrows() if not r.get("Lock", False)]
+        tdata["entries"] = [
+            {"price": float(r["Цена"]), "qty": int(r["Лотов"]), "note": str(r["Комментарий"])} 
+            for _, r in edited.iterrows() if not r.get("Lock", False)
+        ]
         
         total_lots = edited["Лотов"].sum()
         total_cost = (edited["Цена"] * edited["Лотов"] * inst.lot_size).sum()
@@ -104,10 +104,7 @@ def render_trade_planner(ticker: str, df_stocks: pd.DataFrame):
             if buy_level > 0:
                 m2.metric("Риск до покупки", f"{(1 - buy_level / avg_price) * 100:.2f}%")
 
-    # === БЛОК ГРАФИКОВ ===
     st.markdown("#### Графики рынка")
-    
-    # Тумблеры кластеров
     c_tog1, c_tog2 = st.columns(2)
     with c_tog1:
         show_clusters = st.toggle("Кластеры объемов (M10)", value=tdata.get("show_clusters", False), key=f"clu_{ticker}")
@@ -121,10 +118,10 @@ def render_trade_planner(ticker: str, df_stocks: pd.DataFrame):
     
     if show_clusters or show_custom_clusters:
         overlap_pct = st.slider("Порог отсечения кластеров", 10, 100, tdata.get("cluster_threshold", 50), 5, key=f"clu_bins_{ticker}")
-        tdata["cluster_threshold"] = overlap_pct
+        tdata["cluster_threshold"] = int(overlap_pct)
         
         if show_clusters:
-            d1_pts = tdata["charts"]["D1"]["channel"]
+            d1_pts = tdata["charts"]["D1"].get("channel", []) # БЕЗОПАСНО
             if len(d1_pts) == 3:
                 cluster_start_time = pd.to_datetime(d1_pts[2][0])
                 df_m10 = fetch_moex_candles(ticker, interval=10, days_back=60)
@@ -132,7 +129,7 @@ def render_trade_planner(ticker: str, df_stocks: pd.DataFrame):
                     clusters_data = calculate_volume_profile(df_m10.loc[cluster_start_time:], tf_name="M10", threshold_pct=overlap_pct)
 
         if show_custom_clusters:
-            cr_pts = tdata["charts"]["D1"].get("cluster_range", [])
+            cr_pts = tdata["charts"]["D1"].get("cluster_range", []) # БЕЗОПАСНО
             if len(cr_pts) == 2:
                 t1 = pd.to_datetime(cr_pts[0][0])
                 t2 = pd.to_datetime(cr_pts[1][0])
@@ -151,7 +148,6 @@ def render_trade_planner(ticker: str, df_stocks: pd.DataFrame):
 def _render_tf_chart(ticker, tf_name, cfg, inst, tdata, mobile, buy_level, sell_level, clusters_data, custom_clusters_data):
     chart_data = tdata["charts"][tf_name]
 
-    # Инструменты для разных ТФ
     if tf_name == "W": available_tools = ["channel", "fib_d1"]
     elif tf_name == "D1": available_tools = ["channel", "fib_d1", "cluster_range"]
     elif tf_name == "H1": available_tools = ["zigzag", "fib_h1"]
@@ -165,11 +161,11 @@ def _render_tf_chart(ticker, tf_name, cfg, inst, tdata, mobile, buy_level, sell_
     with c2:
         cc1, cc2 = st.columns(2)
         show_tools = cc1.toggle("Разметка", value=chart_data.get("show_tools", True), key=f"tools_{ticker}_{tf_name}")
-        chart_data["show_tools"] = show_tools
+        chart_data["show_tools"] = bool(show_tools)
         show_position = cc1.toggle("Позиция", value=chart_data.get("show_position", True), key=f"pos_{ticker}_{tf_name}")
-        chart_data["show_position"] = show_position
+        chart_data["show_position"] = bool(show_position)
         show_info = cc2.toggle("Информация", value=chart_data.get("show_info", True), key=f"info_{ticker}_{tf_name}")
-        chart_data["show_info"] = show_info
+        chart_data["show_info"] = bool(show_info)
 
     if tf_name == "W": target_tool = tool if tool == "channel" else "fib"
     elif tf_name == "D1": target_tool = tool if tool in ["channel", "cluster_range"] else "fib"
@@ -189,9 +185,8 @@ def _render_tf_chart(ticker, tf_name, cfg, inst, tdata, mobile, buy_level, sell_
         st.warning("Нет данных MOEX.")
         return
 
-    # Зум
-    d1_pts = tdata["charts"]["D1"]["channel"]
-    h1_zig = tdata["charts"]["H1"]["zigzag"]
+    d1_pts = tdata["charts"]["D1"].get("channel", [])
+    h1_zig = tdata["charts"]["H1"].get("zigzag", [])
     zoom_start = None
     if tf_name == "H1" and len(d1_pts) == 3: zoom_start = d1_pts[2][0]
     elif tf_name == "M10" and len(h1_zig) >= 4: zoom_start = h1_zig[-4][0]
@@ -213,14 +208,14 @@ def _render_tf_chart(ticker, tf_name, cfg, inst, tdata, mobile, buy_level, sell_
 
     if click:
         x, y = click
-        y = inst.round_price(y)
+        y = float(inst.round_price(y))
         bar = view.iloc[view.index.get_indexer([pd.to_datetime(x)], method='nearest')[0]]
         new_pts = pts.copy()
         max_pts = 3 if tool == "channel" else (2 if tool in ["fib", "cluster_range"] else None)
 
         if max_pts is None or len(new_pts) < max_pts:
             if tool == "channel":
-                if len(new_pts) == 0: new_pts.append([str(bar.name), y])
+                if len(new_pts) == 0: new_pts.append([str(bar.name), float(y)])
                 elif len(new_pts) == 1:
                     first_time = pd.to_datetime(new_pts[0][0])
                     second_time = pd.to_datetime(bar.name)
@@ -234,7 +229,7 @@ def _render_tf_chart(ticker, tf_name, cfg, inst, tdata, mobile, buy_level, sell_
                         else:
                             y_start, y_end = float(view.loc[t_start, 'High']), float(view.loc[t_end, 'High'])
                             t_mid = view_period['Low'].idxmin(); y_mid = float(view_period.loc[t_mid, 'Low'])
-                        new_pts = [[str(t_start), y_start], [str(t_mid), y_mid], [str(t_end), y_end]]
+                        new_pts = [[str(t_start), float(y_start)], [str(t_mid), float(y_mid)], [str(t_end), float(y_end)]]
             elif tool == "cluster_range":
                 if len(new_pts) == 0: new_pts.append([str(bar.name), float(bar['Low'])])
                 elif len(new_pts) == 1: new_pts.append([str(bar.name), float(bar['High'])])
@@ -243,19 +238,19 @@ def _render_tf_chart(ticker, tf_name, cfg, inst, tdata, mobile, buy_level, sell_
                     last_y = new_pts[-1][1]
                     new_pts[-1] = [str(bar.name), float(bar['Low']) if last_y == bar['High'] else float(bar['High'])]
                 elif not new_pts:
-                    current_price = view.iloc[-1]['Close']
-                    snapped_y = float(bar['Low']) if (bar['High']+bar['Low'])/2 < current_price else float(bar['High'])
-                    new_pts.append([str(bar.name), snapped_y])
+                    current_price = float(view.iloc[-1]['Close'])
+                    snapped_y = float(bar['Low']) if (float(bar['High'])+float(bar['Low']))/2 < current_price else float(bar['High'])
+                    new_pts.append([str(bar.name), float(snapped_y)])
                 elif len(new_pts) == 1:
                     snapped_y = float(bar['High']) if y > new_pts[0][1] else float(bar['Low'])
-                    new_pts.append([str(bar.name), snapped_y])
+                    new_pts.append([str(bar.name), float(snapped_y)])
                 else:
                     is_last_high = new_pts[-1][1] == view.loc[pd.to_datetime(new_pts[-1][0]), 'High']
                     snapped_y = float(bar['Low']) if is_last_high else float(bar['High'])
-                    new_pts.append([str(bar.name), snapped_y])
+                    new_pts.append([str(bar.name), float(snapped_y)])
             else:  # fib
                 if len(new_pts) == 0:
-                    new_pts.append([str(bar.name), float(bar['High']) if abs(y-bar['High'])<abs(y-bar['Low']) else float(bar['Low'])])
+                    new_pts.append([str(bar.name), float(bar['High']) if abs(y-float(bar['High']))<abs(y-float(bar['Low'])) else float(bar['Low'])])
                 elif len(new_pts) == 1:
                     if y > new_pts[0][1]:
                         new_pts[0] = [new_pts[0][0], float(view.loc[pd.to_datetime(new_pts[0][0]), 'Low'])]
@@ -269,7 +264,6 @@ def _render_tf_chart(ticker, tf_name, cfg, inst, tdata, mobile, buy_level, sell_
                 state.autosave(force=True)
                 st.rerun(scope="fragment")
 
-    # Отрисовка всех разметок (сквозная видимость)
     if tf_name == "W":
         w_ch_s, w_fib_s = snap_points(tdata["charts"]["W"]["channel"], view), snap_points(tdata["charts"]["W"]["fib"], view)
         d1_ch_s, d1_fib_s, d1_cr_s, h1_zig_s, h1_fib_s, m10_zig_s = [], [], [], [], [], []
