@@ -147,26 +147,45 @@ def fetch_dividends_dohod(ticker: str) -> dict:
             return result
 
         soup = BeautifulSoup(r.text, 'html.parser')
-        text = soup.get_text(separator=' ', strip=True)
+        
+        # Ищем таблицу с дивидендами
+        table = None
+        for t in soup.find_all('table'):
+            headers = [th.get_text(strip=True) for th in t.find_all('th')]
+            if 'DSI' in headers:
+                table = t
+                break
 
-        # Поиск DSI: ищем слово DSI, затем первое число от 0 до 1
-        dsi_match = re.search(r'DSI.*?([0-1][.,][0-9]{1,2})', text, re.IGNORECASE)
-        if dsi_match:
-            result["dsi"] = float(dsi_match.group(1).replace(',', '.'))
-        else:
-            # Альтернативный поиск (если DSI написан с другими символами)
-            dsi_alt = re.search(r'([0-1][.,][0-9]{1,2})\s*DSI', text, re.IGNORECASE)
-            if dsi_alt:
-                result["dsi"] = float(dsi_alt.group(1).replace(',', '.'))
+        if table:
+            tbody = table.find('tbody')
+            if tbody:
+                for row in tbody.find_all('tr'):
+                    cells = row.find_all('td')
+                    if len(cells) >= 8:
+                        period = cells[2].get_text(strip=True)
+                        dsi_val = cells[7].get_text(strip=True).replace(',', '.')
+                        div_val = cells[3].get_text(strip=True).replace(' ', '').replace(',', '.')
 
-        # Поиск суммы дивидендов за 12 месяцев
-        div_match = re.search(r'Совокупные дивиденды в следующие 12m:\s*([0-9]+[.,]?[0-9]*)\s*руб', text, re.IGNORECASE)
-        if div_match:
-            result["div_12m"] = float(div_match.group(1).replace(',', '.'))
-        else:
-            div_match_alt = re.search(r'след\s*12m\.?\s*\(прогноз\)\s*\|\s*([0-9]+[.,]?[0-9]*)', text, re.IGNORECASE)
-            if div_match_alt:
-                result["div_12m"] = float(div_match_alt.group(1).replace(',', '.'))
+                        # Извлекаем DSI (всегда проверяем, что он от 0 до 1)
+                        try:
+                            d = float(dsi_val)
+                            if 0.0 <= d <= 1.0:
+                                result["dsi"] = d
+                        except: pass
+
+                        # Если нашли строку "всего 12м", берем из нее дивиденд
+                        if "12м" in period or "12 месяцев" in period:
+                            try:
+                                result["div_12m"] = float(div_val)
+                            except: pass
+                            break
+
+        # Если таблицу найти не удалось, используем старый текстовый парсер как запасной вариант
+        if result["div_12m"] == 0.0:
+            text = soup.get_text(separator=' ', strip=True)
+            div_match = re.search(r'Совокупные дивиденды в следующие 12m:\s*([0-9]+[.,]?[0-9]*)\s*руб', text, re.IGNORECASE)
+            if div_match:
+                result["div_12m"] = float(div_match.group(1).replace(',', '.'))
 
         return result
     except Exception:
