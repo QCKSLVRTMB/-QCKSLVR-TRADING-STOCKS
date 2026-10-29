@@ -36,6 +36,7 @@ def calc_ranking(df: pd.DataFrame, state_w_forms: dict, cb_rate: float, extreme_
     df["div_12m"] = df["SECID"].apply(fetch_dividends_moex)
     df["div_yield"] = df.apply(lambda r: (r["div_12m"] / r["PRICE"] * 100) if r["PRICE"] > 0 else 0.0, axis=1)
     df["score_div"] = df.apply(lambda r: 100 if r["div_yield"] > cb_rate else (50 if r["div_yield"] > 0 else 0), axis=1)
+    df["score_paid_12m"] = (df["div_12m"] > 0).astype(int) * 100
     
     # 4. DSI и Листинг
     df["dsi"] = 0.50 
@@ -52,9 +53,9 @@ def calc_ranking(df: pd.DataFrame, state_w_forms: dict, cb_rate: float, extreme_
         axis=1
     )
 
-    # Итог
-    score_cols = [c for c in df.columns if c.startswith("score_")]
-    df["total_score"] = df[score_cols].sum(axis=1)
+    # Итог (7 компонентов)
+    score_cols = ["score_w", "score_strength", "score_div", "score_paid_12m", "score_dsi", "score_list"]
+    df["total_score"] = df[score_cols].sum(axis=1) # Максимум 600 (Арсагера пока 0)
     return df
 
 def get_asset_color(div_yield: float, cb_rate: float, rel_strength: float) -> str:
