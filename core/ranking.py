@@ -1,5 +1,5 @@
 import pandas as pd
-from core.market import fetch_all_closes_on_date, fetch_dividends_dohod
+from core.market import fetch_extreme_close, fetch_dividends_dohod
 
 IMOEX_CONSTITUENTS = {
     "SBER", "GAZP", "LKOH", "ROSN", "NVTK", "TATN", "GMKN", "PLZL", 
@@ -7,7 +7,7 @@ IMOEX_CONSTITUENTS = {
     "MGNT", "MOEX", "PHOR", "SNGS", "TATNP", "TRNFP", "AFKS", "RTKM"
 }
 
-def calc_ranking(df: pd.DataFrame, state_w_forms: dict, cb_rate: float, extreme_date: str, imoex_ext: float, imoex_curr: float) -> pd.DataFrame:
+def calc_ranking(df: pd.DataFrame, state_w_forms: dict, cb_rate: float, closes_on_extreme: dict, imoex_ext: float, imoex_curr: float) -> pd.DataFrame:
     df = df.copy()
     w_scores = {"вверх": 100, "рейндж": 50, "вниз": 0}
     
@@ -15,17 +15,15 @@ def calc_ranking(df: pd.DataFrame, state_w_forms: dict, cb_rate: float, extreme_
     df["w_form"] = df["SECID"].map(state_w_forms).fillna("-")
     df["score_w"] = df["w_form"].map(w_scores).fillna(0)
     
-    # 2. Выше/ниже индекса (Массовая загрузка)
+    # 2. Выше/ниже индекса (Сила актива)
     imoex_chg = (imoex_curr / imoex_ext - 1) if imoex_ext > 0 else 0.0
-    closes_dict = fetch_all_closes_on_date(extreme_date)
     
     def get_rel_strength(row):
         ticker = row["SECID"]
         price_curr = row["PRICE"]
-        if price_curr <= 0: return 0.0
+        price_ext = closes_on_extreme.get(ticker, 0.0)
         
-        price_ext = closes_dict.get(ticker, 0.0)
-        if price_ext > 0:
+        if price_curr > 0 and price_ext > 0:
             stock_chg = (price_curr / price_ext - 1)
             return (stock_chg - imoex_chg) * 100
         return 0.0
@@ -33,7 +31,7 @@ def calc_ranking(df: pd.DataFrame, state_w_forms: dict, cb_rate: float, extreme_
     df["rel_strength"] = df.apply(get_rel_strength, axis=1)
     df["score_strength"] = (df["rel_strength"] > 0).astype(int) * 100
     
-    # 3. Дивиденды
+    # 3. Дивиденды (dohod.ru)
     def get_div_data(ticker):
         res = fetch_dividends_dohod(ticker)
         return res.get("div_12m", 0.0), res.get("dsi", 0.0)
@@ -64,15 +62,7 @@ def calc_ranking(df: pd.DataFrame, state_w_forms: dict, cb_rate: float, extreme_
     )
 
     # Итоговая сумма баллов
-    score_cols = [
-        "score_w", 
-        "score_strength", 
-        "score_div", 
-        "score_paid_12m", 
-        "score_dsi", 
-        "score_list",
-        "score_in_index"
-    ]
+    score_cols = ["score_w", "score_strength", "score_div", "score_paid_12m", "score_dsi", "score_list", "score_in_index"]
     df["total_score"] = df[score_cols].sum(axis=1)
     return df
 
