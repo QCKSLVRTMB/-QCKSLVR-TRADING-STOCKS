@@ -114,7 +114,8 @@ def render_trade_planner(ticker: str, df_stocks: pd.DataFrame):
         overlap_pct = st.slider("Порог отсечения кластеров", 10, 100, tdata.get("cluster_threshold", 50), 5, key=f"clu_bins_{ticker}")
         tdata["cluster_threshold"] = overlap_pct
         
-        d1_pts = tdata["charts"]["D1"]["cluster_range"]
+        # Безопасное получение списка точек
+        d1_pts = tdata["charts"]["D1"].get("cluster_range", [])
         if len(d1_pts) == 2:
             t_start = pd.to_datetime(min(d1_pts[0][0], d1_pts[1][0]))
             df_m10 = fetch_moex_candles(ticker, interval=10, days_back=730)
@@ -145,7 +146,7 @@ def _render_tf_chart(ticker, tf_name, cfg, inst, tdata, mobile, buy_level, sell_
     # Кнопки управления
     b1, b2 = st.columns(2)
     if b1.button("Отменить", key=f"undo_{ticker}_{tf_name}", use_container_width=True):
-        if chart_data[tool]: chart_data[tool].pop(); state.autosave(force=True); st.rerun(scope="fragment")
+        if chart_data.get(tool): chart_data[tool].pop(); state.autosave(force=True); st.rerun(scope="fragment")
     if b2.button("Очистить", key=f"clr_{ticker}_{tf_name}", use_container_width=True):
         chart_data[tool] = []; state.autosave(force=True); st.rerun(scope="fragment")
 
@@ -159,7 +160,7 @@ def _render_tf_chart(ticker, tf_name, cfg, inst, tdata, mobile, buy_level, sell_
     
     # Обработка кликов
     click = charts.capture_click(chart_key)
-    pts = chart_data[tool]
+    pts = chart_data.get(tool, [])
     if click:
         x, y = click
         y = inst.round_price(y)
