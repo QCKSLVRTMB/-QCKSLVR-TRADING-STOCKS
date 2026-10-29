@@ -15,7 +15,7 @@ def calc_ranking(df: pd.DataFrame, state_w_forms: dict, cb_rate: float, extreme_
     df["w_form"] = df["SECID"].map(state_w_forms).fillna("-")
     df["score_w"] = df["w_form"].map(w_scores).fillna(0)
     
-    # 2. Выше/ниже индекса (Реальный расчет)
+    # 2. Выше/ниже индекса
     imoex_chg = (imoex_curr / imoex_ext - 1) if imoex_ext > 0 else 0.0
     
     def get_rel_strength(row):
@@ -32,13 +32,13 @@ def calc_ranking(df: pd.DataFrame, state_w_forms: dict, cb_rate: float, extreme_
     df["rel_strength"] = df.apply(get_rel_strength, axis=1)
     df["score_strength"] = (df["rel_strength"] > 0).astype(int) * 100
     
-    # 3. Дивиденды (Реальный расчет)
+    # 3. Дивиденды
     df["div_12m"] = df["SECID"].apply(fetch_dividends_moex)
     df["div_yield"] = df.apply(lambda r: (r["div_12m"] / r["PRICE"] * 100) if r["PRICE"] > 0 else 0.0, axis=1)
     df["score_div"] = df.apply(lambda r: 100 if r["div_yield"] > cb_rate else (50 if r["div_yield"] > 0 else 0), axis=1)
     
     # 4. DSI и Листинг
-    df["dsi"] = 0.50 # Временно, пока не спарсим Smart-Lab
+    df["dsi"] = 0.50 
     df["score_dsi"] = df["dsi"] * 100
     list_scores = {1: 100, 2: 70, 3: 40}
     df["score_list"] = df["LISTLEVEL"].map(list_scores).fillna(0)
