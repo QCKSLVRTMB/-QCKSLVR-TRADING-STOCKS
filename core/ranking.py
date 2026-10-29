@@ -15,7 +15,7 @@ def calc_ranking(df: pd.DataFrame, state_w_forms: dict, cb_rate: float, extreme_
     df["w_form"] = df["SECID"].map(state_w_forms).fillna("-")
     df["score_w"] = df["w_form"].map(w_scores).fillna(0)
     
-    # 2. Выше/ниже индекса
+    # 2. Выше/ниже индекса (Сила актива)
     imoex_chg = (imoex_curr / imoex_ext - 1) if imoex_ext > 0 else 0.0
     
     def get_rel_strength(row):
@@ -32,30 +32,41 @@ def calc_ranking(df: pd.DataFrame, state_w_forms: dict, cb_rate: float, extreme_
     df["rel_strength"] = df.apply(get_rel_strength, axis=1)
     df["score_strength"] = (df["rel_strength"] > 0).astype(int) * 100
     
-    # 3. Дивиденды
+    # 3. Дивиденды (по рынку)
     df["div_12m"] = df["SECID"].apply(fetch_dividends_moex)
     df["div_yield"] = df.apply(lambda r: (r["div_12m"] / r["PRICE"] * 100) if r["PRICE"] > 0 else 0.0, axis=1)
     df["score_div"] = df.apply(lambda r: 100 if r["div_yield"] > cb_rate else (50 if r["div_yield"] > 0 else 0), axis=1)
+    
+    # 4. Выплачено за 12 месяцев
     df["score_paid_12m"] = (df["div_12m"] > 0).astype(int) * 100
     
-    # 4. DSI и Листинг
-    df["dsi"] = 0.50 
+    # 5. DSI и Листинг
+    df["dsi"] = 0.50 # Заглушка
     df["score_dsi"] = df["dsi"] * 100
     list_scores = {1: 100, 2: 70, 3: 40}
     df["score_list"] = df["LISTLEVEL"].map(list_scores).fillna(0)
     
-    # 5. В составе индекса
+    # 6. В составе индекса
     df["in_index"] = df["SECID"].isin(IMOEX_CONSTITUENTS)
+    df["score_in_index"] = df["in_index"].astype(int) * 100
     
-    # 6. Рекомендуемая цена
+    # 7. Рекомендуемая цена
     df["recommended_price"] = df.apply(
         lambda r: round(r["div_12m"] / (cb_rate / 100), 2) if r["div_12m"] > 0 and cb_rate > 0 else 0.0, 
         axis=1
     )
 
-    # Итог (7 компонентов)
-    score_cols = ["score_w", "score_strength", "score_div", "score_paid_12m", "score_dsi", "score_list"]
-    df["total_score"] = df[score_cols].sum(axis=1) # Максимум 600 (Арсагера пока 0)
+    # Итоговая сумма баллов (все критерии)
+    score_cols = [
+        "score_w", 
+        "score_strength", 
+        "score_div", 
+        "score_paid_12m", 
+        "score_dsi", 
+        "score_list",
+        "score_in_index"
+    ]
+    df["total_score"] = df[score_cols].sum(axis=1)
     return df
 
 def get_asset_color(div_yield: float, cb_rate: float, rel_strength: float) -> str:
