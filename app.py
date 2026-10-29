@@ -39,7 +39,6 @@ with st.sidebar:
     st.divider()
     st.header("Импорт / Экспорт")
     
-    # ЗАГРУЗКА ИСТОЧНИКОВ (АРСАГЕРА + DSI)
     sources_file = st.file_uploader("Загрузить Источники.xlsx", type=["xlsx"])
     if sources_file:
         if st.button("Применить источники", use_container_width=True):
@@ -50,13 +49,12 @@ with st.sidebar:
             state.autosave()
             st.rerun()
 
-    # Импорт W-формаций
     w_file = st.file_uploader("Импорт W-формаций (Excel)", type=["xlsx", "xls"])
     if w_file:
         try:
             df_w = pd.read_excel(w_file)
             if len(df_w.columns) >= 2:
-                new_w = dict(zip(df_w.iloc[:, 0].str.upper(), df_w.iloc[:, 1]))
+                new_w = dict(zip(df_w.iloc[:, 0].astype(str).str.upper(), df_w.iloc[:, 1].astype(str)))
                 state.set_global("w_formations", new_w)
                 st.success("W-формации обновлены!")
                 state.autosave()
@@ -64,12 +62,13 @@ with st.sidebar:
         except Exception as e:
             st.error(f"Ошибка чтения: {e}")
 
-    # Импорт Портфеля
     port_file = st.file_uploader("Импорт Портфеля (Excel)", type=["xlsx", "xls"])
     if port_file:
         try:
             df_port = pd.read_excel(port_file)
-            state.set_global("portfolio_data", df_port.to_dict(orient="records"))
+            # Очищаем ключи от NaN и приводим к строкам
+            port_data = [{str(k): v for k, v in row.items() if pd.notna(k)} for row in df_port.to_dict(orient="records")]
+            state.set_global("portfolio_data", port_data)
             st.success("Портфель загружен!")
             state.autosave()
             st.rerun()
