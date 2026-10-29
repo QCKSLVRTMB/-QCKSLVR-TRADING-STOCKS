@@ -14,12 +14,13 @@ ISS_INDICES = "https://iss.moex.com/iss/engines/stock/markets/index/securities.j
 ISS_CANDLES = "https://iss.moex.com/iss/engines/stock/markets/{market}/securities/{ticker}/candles.json"
 ISS_HISTORY = "https://iss.moex.com/iss/history/engines/stock/markets/{market}/securities/{ticker}.json"
 ISS_DIVIDENDS = "https://iss.moex.com/iss/securities/{ticker}/dividends.json?iss.meta=off"
+ISS_BULK_HISTORY = "https://iss.moex.com/iss/history/engines/stock/markets/shares/boards/TQBR/securities.json"
 
 @st.cache_resource(show_spinner=False)
 def _session() -> requests.Session:
     s = requests.Session()
     s.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"})
-    s.mount("https://", HTTPAdapter(max_retries=Retry(total=3, backoff_factor=0.5)))
+    s.mount("https://", HTTPAdapter(max_retries=Retry(total=2, backoff_factor=0.5)))
     return s
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -106,12 +107,44 @@ def fetch_extreme_close(ticker: str, date_val, market: str = "index") -> tuple[f
     except Exception:
         return 0.0, "-"
 
-# Вспомогательная функция для MOEX (Резервный источник)
+@st.cache_data(ttl=None, show_spinner=False)
+def fetch_all_closes_on_date(date_val) -> dict:
+    """Загружает цены закрытия ВСЕХ акций на конкретную дату ОДНИМ запросом."""
+    try:
+        if isinstance(date_val, str):
+            d = datetime.strptime(date_val, "%d.%m.%Y")
+        else:
+            d = date_val
+            
+        monday = d - timedelta(days=d.isoweekday() - 1)
+        friday = monday + timedelta(days=4)
+        today = datetime.now()
+        if friday > today: friday = today
+        
+        date_str = friday.strftime("%Y-%m-%d")
+        
+        r = _session().get(ISS_BULK_HISTORY, params={"date": date_str, "iss.meta": "off"}, timeout=15)
+        block = r.json().get("history", {})
+        data = block.get("data", [])
+        cols = block.get("columns", [])
+        
+        if not data or not cols: return {}
+        
+        try:
+            secid_idx = cols.index("SECID")
+            close_idx = cols.index("CLOSE")
+        except ValueError:
+            return {}
+            
+        return {row[secid_idx]: float(row[close_idx]) for row in data if row[close_idx] is not None}
+    except Exception:
+        return {}
+
 @st.cache_data(ttl=86400, show_spinner=False)
 def fetch_dividends_moex(ticker: str) -> float:
     url = ISS_DIVIDENDS.format(ticker=ticker)
     try:
-        r = _session().get(url, timeout=10)
+        r = _session().get(url, timeout=5)
         block = r.json().get("dividends", {})
         cols = block.get("columns", [])
         data = block.get("data", [])
@@ -144,13 +177,12 @@ def fetch_dividends_moex(ticker: str) -> float:
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def fetch_dividends_dohod(ticker: str) -> dict:
-    """Парсинг dohod.ru с резервным переходом на MOEX при блокировке."""
     url = f"https://www.dohod.ru/ik/analytics/dividend/{ticker.lower()}"
     result = {"div_12m": 0.0, "dsi": 0.0, "source": "none"}
     
-    # Попытка 1: Dohod.ru
+    # Уменьшен таймаут до 3 секунд
     try:
-        r = _session().get(url, timeout=10)
+        r = _session().get(url, timeout=3)
         if r.status_code == 200:
             soup = BeautifulSoup(r.text, 'html.parser')
             text = soup.get_text()
@@ -188,9 +220,9 @@ def fetch_dividends_dohod(ticker: str) -> dict:
                             result["source"] = "dohod"
                             return result
     except Exception:
-        pass # Игнорируем ошибку блокировки и идем в MOEX
+        pass
 
-    # Попытка 2: Резервный MOEX ISS
+    # Резервный MOEX ISS
     try:
         moex_div = fetch_dividends_moex(ticker)
         if moex_div > 0:
