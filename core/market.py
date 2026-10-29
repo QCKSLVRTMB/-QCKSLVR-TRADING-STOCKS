@@ -7,6 +7,7 @@ from requests.adapters import HTTPAdapter, Retry
 import time
 from bs4 import BeautifulSoup
 import re
+import concurrent.futures
 from core.config import INDEX_META
 
 ISS_SHARES = "https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/securities.json?iss.meta=off&iss.only=securities,marketdata&limit=1000"
@@ -105,6 +106,21 @@ def fetch_extreme_close(ticker: str, date_val, market: str = "index") -> tuple[f
     except Exception:
         return 0.0, "-"
 
+@st.cache_data(ttl=None, show_spinner=False)
+def fetch_many_extreme_closes(tickers: list[str], date_val) -> dict[str, float]:
+    """Параллельная загрузка цен экстремума для списка тикеров."""
+    result = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
+        future_to_ticker = {executor.submit(fetch_extreme_close, t, date_val, "shares"): t for t in tickers}
+        for future in concurrent.futures.as_completed(future_to_ticker):
+            t = future_to_ticker[future]
+            try:
+                price, _ = future.result()
+                result[t] = price
+            except Exception:
+                result[t] = 0.0
+    return result
+
 @st.cache_data(ttl=86400, show_spinner=False)
 def fetch_dividends_dohod(ticker: str) -> dict:
     url = f"https://www.dohod.ru/ik/analytics/dividend/{ticker.lower()}"
@@ -143,6 +159,20 @@ def fetch_dividends_dohod(ticker: str) -> dict:
         return result
     except Exception:
         return result
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def fetch_many_dividends(tickers: list[str]) -> dict[str, dict]:
+    """Параллельная загрузка дивидендов для списка тикеров."""
+    result = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        future_to_ticker = {executor.submit(fetch_dividends_dohod, t): t for t in tickers}
+        for future in concurrent.futures.as_completed(future_to_ticker):
+            t = future_to_ticker[future]
+            try:
+                result[t] = future.result()
+            except Exception:
+                result[t] = {"div_12m": 0.0, "dsi": 0.0}
+    return result
 
 @st.cache_data(ttl=180, show_spinner=False)
 def fetch_moex_candles(ticker: str, interval: int, days_back: int = 60, market: str = "shares") -> pd.DataFrame:
