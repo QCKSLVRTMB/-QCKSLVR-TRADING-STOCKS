@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-SCHEMA_VERSION = 5 # Версия обновлена
+SCHEMA_VERSION = 5
 APP_TITLE = "Калькулятор акций MOEX"
 
 TREND_VALUES = ["вверх", "вниз", "рейндж"]
@@ -47,7 +47,6 @@ INDEX_META = {
     "MREDC":  {"name": "Недвижимость", "color": "#FFFFFF"},
 }
 
-# Дефолтные W-формации
 DEFAULT_W_FORMATIONS = {
     "ABIO": "вверх", "ABRD": "вверх", "AFKS": "вниз", "AFLT": "вверх", 
     "AKRN": "вверх", "ALRS": "вверх", "AMEZ": "вверх", "APTK": "вниз",
@@ -55,9 +54,9 @@ DEFAULT_W_FORMATIONS = {
     "ROSN": "вниз", "NVTK": "вверх", "SIBN": "вверх", "TRNFP": "вверх"
 }
 
-# Дефолтные группы Арсагеры (1, 2, 3, 4). Если тикера нет - 0 баллов.
 DEFAULT_ARSAGERA_GROUPS = {
-    "LKOH": 1, "SBER": 1, "GAZP": 1, "ROSN": 1, "TATN": 1, "NVTK": 1
+    "LKOH": 1, "SBER": 1, "GAZP": 1, "ROSN": 1, "TATN": 1, "NVTK": 1,
+    "CHMF": 1, "NLMK": 1, "MAGN": 1, "PLZL": 1, "MTSS": 1, "MOEX": 1
 }
 
 DEFAULT_GLOBAL = {
