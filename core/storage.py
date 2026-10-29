@@ -1,4 +1,4 @@
-"""Персистентность: схема v2, миграция с v1, атомарная запись, debounce."""
+"""Персистентность: схема v3, миграция, атомарная запись, debounce."""
 from __future__ import annotations
 
 import json, os, re, tempfile, time
@@ -13,9 +13,11 @@ PROFILE_RE = re.compile(r"[^A-Za-z0-9_\-а-яА-Я ]+")
 
 def default_ticker_state() -> dict:
     return {
-        "market": {"trend": "вверх", "wave": "вверх", "tendency": "вверх", "trade_type": "трендовая"},
-        "charts": {tf: {"channel": [], "fib": [], "zigzag": [], "levels": []} for tf in TIMEFRAMES},
-        "deal": {"direction": "LONG", "sl": None, "tp": None, "entries": []},
+        "market": {"trend": "вверх", "wave": "вверх", "tendency": "вверх"},
+        "charts": {tf: {"channel": [], "fib": [], "zigzag": [], "levels": [], "cluster_range": []} for tf in TIMEFRAMES},
+        "buy_level": None,
+        "sell_level": None,
+        "entries": [],
         "note": "",
         "updated_at": None,
     }
@@ -40,6 +42,7 @@ def normalize_points(points) -> list:
 def _normalize_ticker(raw: dict) -> dict:
     base = default_ticker_state()
     if not isinstance(raw, dict): return base
+    
     base["market"].update({k: v for k, v in (raw.get("market") or {}).items() if v})
     for tf, tools in (raw.get("charts") or {}).items():
         if tf not in base["charts"]: continue
@@ -48,56 +51,19 @@ def _normalize_ticker(raw: dict) -> dict:
                 base["charts"][tf]["levels"] = sorted({round(float(v), 8) for v in (pts or []) if v is not None})
             elif tool in base["charts"][tf]:
                 base["charts"][tf][tool] = normalize_points(pts)
-    deal = raw.get("deal") or {}
-    base["deal"]["direction"] = deal.get("direction") or "LONG"
-    base["deal"]["sl"] = deal.get("sl")
-    base["deal"]["tp"] = deal.get("tp")
-    base["deal"]["entries"] = [
+                
+    base["buy_level"] = raw.get("buy_level")
+    base["sell_level"] = raw.get("sell_level")
+    base["entries"] = [
         {"price": float(e.get("price", 0) or 0), "qty": int(e.get("qty", 0) or 0), "note": str(e.get("note", "") or "")}
-        for e in (deal.get("entries") or []) if e
+        for e in (raw.get("entries") or []) if e
     ]
     base["note"] = str(raw.get("note", "") or "")
     base["updated_at"] = raw.get("updated_at")
     return base
 
-_LEGACY_MAP = {
-    "d1_manual_pts": ("D1", "channel"), "d1_fib_pts": ("D1", "fib"),
-    "h1_tend_pts": ("H1", "zigzag"), "h1_fib_pts": ("H1", "fib"),
-    "h1_levels": ("H1", "levels"), "m10_zig_pts": ("M10", "zigzag"),
-}
-
-def _migrate_v1(raw: dict) -> dict:
-    st_ = default_state()
-    g = raw.get("_global") or {}
-    st_["global"].update({k: v for k, v in g.items() if k in DEFAULT_GLOBAL})
-    st_["global"]["active_tickers"] = list(raw.get("_active_tickers") or [])
-    market = raw.get("_market_state") or {}
-
-    for key, val in raw.items():
-        if key.startswith("_") or not isinstance(val, dict): continue
-        t = default_ticker_state()
-        for legacy_key, (tf, tool) in _LEGACY_MAP.items():
-            if legacy_key in val:
-                t["charts"][tf][tool] = (
-                    sorted({float(x) for x in val[legacy_key] or []}) if tool == "levels" else normalize_points(val[legacy_key])
-                )
-        t["deal"]["direction"] = val.get("direction") or "LONG"
-        t["deal"]["sl"] = val.get("sl_price")
-        t["deal"]["tp"] = val.get("tp_price")
-        t["deal"]["entries"] = [
-            {"price": float(e.get("price", e.get("Цена", 0)) or 0),
-             "qty": int(e.get("qty", e.get("Кол-во", 0)) or 0),
-             "note": str(e.get("note", e.get("Комментарий", "")) or "")}
-            for e in (val.get("entries") or [])
-        ]
-        if key in market: t["market"].update(market[key])
-        st_["tickers"][key] = t
-    return st_
-
 def migrate(raw: dict) -> dict:
     if not isinstance(raw, dict): return default_state()
-    version = raw.get("version")
-    if version is None: return _migrate_v1(raw)
     st_ = default_state()
     st_["global"].update({k: v for k, v in (raw.get("global") or {}).items() if k in DEFAULT_GLOBAL})
     st_["tickers"] = {k: _normalize_ticker(v) for k, v in (raw.get("tickers") or {}).items()}
@@ -131,9 +97,6 @@ def load_profile(profile: str = "default") -> dict:
         with path.open("r", encoding="utf-8") as f:
             return migrate(json.load(f))
     except Exception:
-        bad = path.with_suffix(f".corrupt-{int(time.time())}.json")
-        try: path.rename(bad)
-        except Exception: pass
         return default_state()
 
 def dumps(state: dict, pretty: bool = True) -> str:
