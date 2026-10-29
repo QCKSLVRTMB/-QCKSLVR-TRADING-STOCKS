@@ -32,7 +32,6 @@ def render_rating():
     
     df = df.sort_values("total_score", ascending=False).reset_index(drop=True)
     df["№"] = df.index + 1
-
     df["in_index_str"] = df["in_index"].map({True: "да", False: "нет"})
 
     display_df = pd.DataFrame({
@@ -43,16 +42,15 @@ def render_rating():
         "Формация": df["w_form"],
         "В составе индекса": df["in_index_str"],
         "Сила актива": df["rel_strength"],
-        "Дивидендная доходность (по рынку)": df["div_yield"],
+        "Див. доходность": df["div_yield"],
         "DSI": df["dsi"],
-        "Тип листинга": df["LISTLEVEL"],
+        "Листинг": df["LISTLEVEL"],
         "Сумма баллов": df["total_score"],
-        "Рекомендуемая цена": df["recommended_price"]
+        "Рек. цена": df["recommended_price"]
     })
 
     def apply_styles(row):
         styles = [""] * len(row)
-        
         w = row["Формация"]
         if w == "вверх": styles[4] = "background-color: #4CAF50; color: #4CAF50;"
         elif w == "рейндж": styles[4] = "background-color: #2196F3; color: #2196F3;"
@@ -69,7 +67,6 @@ def render_rating():
         elif color == "yellow": styles[3] = "background-color: #FFEB3B; color: #FFEB3B;"
         elif color == "orange": styles[3] = "background-color: #FF9800; color: #FF9800;"
         elif color == "red": styles[3] = "background-color: #F44336; color: #F44336;"
-        
         return styles
 
     styled_df = (
@@ -79,13 +76,26 @@ def render_rating():
             "Вид актива": lambda x: "",
             "Формация": lambda x: "",
             "Сила актива": "{:+.2f}%",
-            "Дивидендная доходность (по рынку)": "{:.2f}%",
+            "Див. доходность": "{:.2f}%",
             "DSI": "{:.2f}",
-            "Тип листинга": "{:.0f}",
+            "Листинг": "{:.0f}",
             "Сумма баллов": "{:.0f}",
-            "Рекомендуемая цена": "{:.2f} ₽",
+            "Рек. цена": "{:.2f} ₽",
             "№": "{:.0f}"
         })
     )
 
     st.dataframe(styled_df, use_container_width=True, hide_index=True)
+    
+    # Отладочный блок
+    with st.expander("🛠 Отладка расчетов силы актива (Нажмите для проверки)"):
+        st.write(f"**IMOEX на экстремум ({extreme_date}):** {imoex_ext:.2f}")
+        st.write(f"**Текущий IMOEX:** {imoex_curr:.2f}")
+        st.write(f"**Изменение IMOEX:** {df['imoex_chg'].iloc[0]:+.2f}%")
+        st.dataframe(
+            df[["SECID", "price_curr", "price_ext", "stock_chg", "imoex_chg", "rel_strength"]].rename(columns={
+                "SECID": "Тикер", "price_curr": "Цена сейчас", "price_ext": "Цена на экстремум",
+                "stock_chg": "Изм. акции %", "imoex_chg": "Изм. индекса %", "rel_strength": "Сила актива %"
+            }),
+            use_container_width=True, hide_index=True
+        )
