@@ -1,5 +1,5 @@
 import pandas as pd
-from core.market import fetch_extreme_close, fetch_dividends_moex
+from core.market import fetch_extreme_close, fetch_dividends_dohod
 
 IMOEX_CONSTITUENTS = {
     "SBER", "GAZP", "LKOH", "ROSN", "NVTK", "TATN", "GMKN", "PLZL", 
@@ -32,8 +32,15 @@ def calc_ranking(df: pd.DataFrame, state_w_forms: dict, cb_rate: float, extreme_
     df["rel_strength"] = df.apply(get_rel_strength, axis=1)
     df["score_strength"] = (df["rel_strength"] > 0).astype(int) * 100
     
-    # 3. Дивиденды (по рынку)
-    df["div_12m"] = df["SECID"].apply(fetch_dividends_moex)
+    # 3. Дивиденды (используем dohod.ru)
+    def get_div_data(ticker):
+        res = fetch_dividends_dohod(ticker)
+        return res.get("div_12m", 0.0), res.get("dsi", 0.0)
+
+    div_data = df["SECID"].apply(get_div_data)
+    df["div_12m"] = [x[0] for x in div_data]
+    df["dsi"] = [x[1] for x in div_data]
+    
     df["div_yield"] = df.apply(lambda r: (r["div_12m"] / r["PRICE"] * 100) if r["PRICE"] > 0 else 0.0, axis=1)
     df["score_div"] = df.apply(lambda r: 100 if r["div_yield"] > cb_rate else (50 if r["div_yield"] > 0 else 0), axis=1)
     
@@ -41,7 +48,6 @@ def calc_ranking(df: pd.DataFrame, state_w_forms: dict, cb_rate: float, extreme_
     df["score_paid_12m"] = (df["div_12m"] > 0).astype(int) * 100
     
     # 5. DSI и Листинг
-    df["dsi"] = 0.50 # Заглушка
     df["score_dsi"] = df["dsi"] * 100
     list_scores = {1: 100, 2: 70, 3: 40}
     df["score_list"] = df["LISTLEVEL"].map(list_scores).fillna(0)
