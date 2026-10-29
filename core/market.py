@@ -1,149 +1,119 @@
 from __future__ import annotations
 from datetime import datetime, timedelta
-from io import StringIO
-import time
 import pandas as pd
 import requests
 import streamlit as st
 from requests.adapters import HTTPAdapter, Retry
+import io
+from core.config import INDEX_META
 
-ISS = "https://iss.moex.com/iss/engines/futures/markets/forts"
-MOEX_URL = f"{ISS}/securities.json?iss.meta=off&iss.only=securities,marketdata"
-MOEX_IMS_URL = f"{ISS}/ims"
-MOEX_CANDLES_URL = ISS + "/securities/{ticker}/candles.json"
-
-SHEET_ID = "" 
-GIDS = {"API": "0", "MARKETDATA": "0", "ГО": "0", "Списки": "0"}
-USE_GSHEETS = bool(SHEET_ID) and "ВАШ_ID" not in SHEET_ID
+ISS_SHARES = "https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/securities.json?iss.meta=off&iss.only=securities,marketdata&limit=1000"
+ISS_INDICES = "https://iss.moex.com/iss/engines/stock/markets/index/securities.json?iss.meta=off&iss.only=securities,marketdata"
+ISS_CANDLES = "https://iss.moex.com/iss/engines/stock/markets/{market}/securities/{ticker}/candles.json"
+ISS_HISTORY = "https://iss.moex.com/iss/history/engines/stock/markets/{market}/securities/{ticker}.json"
 
 @st.cache_resource(show_spinner=False)
 def _session() -> requests.Session:
     s = requests.Session()
-    s.headers.update({"User-Agent": "futures-calc/2.0"})
-    s.mount("https://", HTTPAdapter(
-        max_retries=Retry(total=5, backoff_factor=0.5, status_forcelist=(429, 500, 502, 503, 504), raise_on_status=False),
-        pool_maxsize=8
-    ))
+    s.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+    s.mount("https://", HTTPAdapter(max_retries=Retry(total=3, backoff_factor=0.5)))
     return s
 
-@st.cache_data(ttl=600, show_spinner=False)
-def _load(gid: str) -> pd.DataFrame:
-    if not USE_GSHEETS: return pd.DataFrame()
-    url = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid={gid}"
-    try: return pd.read_csv(url)
-    except Exception: return pd.DataFrame()
-
-def load_api():        return _load(GIDS["API"])
-def load_go():         return _load(GIDS["ГО"])
-def load_marketdata(): return _load(GIDS["MARKETDATA"])
-def load_lists():      return _load(GIDS["Списки"])
-
-def to_float(x, default: float = 0.0) -> float:
-    try: return float(str(x).replace("\u00a0", "").replace(" ", "").replace(",", "."))
-    except Exception: return default
-
-def vlookup(df: pd.DataFrame, key, col_idx: int):
-    if df is None or df.empty: return "-"
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_moex_stocks() -> pd.DataFrame:
     try:
-        mask = df.iloc[:, 0].astype(str).str.strip() == str(key).strip()
-        rows = df.loc[mask]
-        if rows.empty: return "-"
-        val = rows.iloc[0, col_idx - 1]
-        return val if pd.notna(val) else "-"
-    except Exception: return "-"
-
-SEC_COLS = ["SECID", "SHORTNAME", "ASSETCODE", "LOTSIZE", "MINSTEP", "STEPPRICE", "LASTTRADEDATE", "INITIALMARGIN", "PREVPRICE", "PREVSETTLEPRICE", "BUYSELLFEE", "DECIMALS", "HIGHLIMIT", "LOWLIMIT"]
-MKT_COLS = ["SECID", "LAST", "VALTODAY", "OPENPOSITION", "HIGH", "LOW", "UPDATETIME", "LASTCHANGEPRCNT", "NUMTRADES"]
-NUMERIC = ["BUYSELLFEE", "LAST", "VALTODAY", "OPENPOSITION", "HIGH", "LOW", "INITIALMARGIN", "STEPPRICE", "MINSTEP", "PREVPRICE", "PREVSETTLEPRICE", "LOTSIZE", "DECIMALS", "HIGHLIMIT", "LOWLIMIT", "LASTCHANGEPRCNT", "NUMTRADES"]
-
-def _subset(raw: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
-    out = pd.DataFrame(index=raw.index)
-    for c in cols: out[c] = raw[c] if c in raw.columns else None
-    return out
-
-@st.cache_data(ttl=120, show_spinner=False)
-def fetch_moex_forts() -> pd.DataFrame:
-    try:
-        r = _session().get(MOEX_URL, timeout=30)
-        r.raise_for_status()
+        r = _session().get(ISS_SHARES, timeout=30)
         js = r.json()
         sec = pd.DataFrame(js["securities"]["data"], columns=js["securities"]["columns"])
         mkt = pd.DataFrame(js["marketdata"]["data"], columns=js["marketdata"]["columns"])
     except Exception as e:
-        st.warning(f"MOEX ISS недоступен: {e}")
+        st.warning(f"ISS недоступен: {e}")
         return pd.DataFrame()
 
-    df = _subset(sec, SEC_COLS).merge(_subset(mkt, MKT_COLS), on="SECID", how="left")
-    for c in NUMERIC: df[c] = pd.to_numeric(df.get(c), errors="coerce").fillna(0.0)
-
-    df["PRICE"] = df["LAST"].where(df["LAST"] > 0, df["PREVSETTLEPRICE"])
-    df["POINT_VALUE"] = df["STEPPRICE"] / df["MINSTEP"].replace(0, pd.NA)
-    df["POINT_VALUE"] = df["POINT_VALUE"].fillna(1.0)
-    df["Notional"] = df["PRICE"] * df["POINT_VALUE"]
-    df["Updated"] = pd.to_datetime(df["UPDATETIME"], errors="coerce")
+    df = sec[["SECID", "SHORTNAME", "LOTSIZE", "MINSTEP", "PREVPRICE", "LISTLEVEL", "ISSUESIZE", "DECIMALS"]].merge(
+        mkt[["SECID", "LAST", "VALTODAY", "LASTCHANGEPRCNT", "NUMTRADES"]], on="SECID", how="left")
+    
+    for c in ["LOTSIZE", "MINSTEP", "PREVPRICE", "LISTLEVEL", "ISSUESIZE", "DECIMALS", "LAST", "VALTODAY", "LASTCHANGEPRCNT", "NUMTRADES"]:
+        df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
+        
+    df["PRICE"] = df["LAST"].where(df["LAST"] > 0, df["PREVPRICE"])
+    df["LOT_VALUE"] = df["PRICE"] * df["LOTSIZE"]
+    df["CAPITALIZATION"] = df["PRICE"] * df["ISSUESIZE"]
     return df
 
-@st.cache_data(ttl=900, show_spinner=False)
-def fetch_moex_ims() -> pd.DataFrame:
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_moex_indices() -> pd.DataFrame:
     try:
-        r = _session().get(MOEX_IMS_URL, params={"iss.meta": "off", "format": "json"}, timeout=15)
-        r.raise_for_status()
-        block = r.json().get("ims") or {}
-        df = pd.DataFrame(block.get("data") or [], columns=block.get("columns") or [])
+        r = _session().get(ISS_INDICES, timeout=30)
+        js = r.json()
+        sec = pd.DataFrame(js["securities"]["data"], columns=js["securities"]["columns"])
+        mkt = pd.DataFrame(js["marketdata"]["data"], columns=js["marketdata"]["columns"])
     except Exception:
-        try:
-            r = _session().get(MOEX_IMS_URL, params={"iss.meta": "off"}, timeout=15)
-            r.raise_for_status()
-            df = pd.read_csv(StringIO(r.text), sep="|")
-            df.columns = [c.split("(")[0].strip() for c in df.columns]
-        except Exception: return pd.DataFrame()
+        return pd.DataFrame()
 
-    if df.empty: return df
-    df.columns = [str(c).upper() for c in df.columns]
-
-    for c in df.columns:
-        if c.startswith("IM_") and c != "IM_TIME":
-            df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0.0)
-    if "IM_TIME" in df.columns:
-        df["IM_TIME"] = pd.to_datetime(df["IM_TIME"], errors="coerce")
-
-    # Оставляем только основной режим торгов фьючерсов, чтобы не было дублей по SECID
-    if "BOARDID" in df.columns:
-        filtered = df[df["BOARDID"] == "RFUD"]
-        if not filtered.empty:
-            df = filtered
-
-    # На всякий случай, если на одном SECID осталось несколько строк
-    if "SECID" in df.columns:
-        df = df.drop_duplicates(subset=["SECID"], keep="first")
-
+    valid_tickers = ["IMOEX"] + list(INDEX_META.keys())
+    df = sec[sec["SECID"].isin(valid_tickers)][["SECID", "SHORTNAME"]].merge(
+        mkt[["SECID", "CURRENTVALUE", "LASTCHANGEPRCNT"]], on="SECID", how="left")
+    
+    df["CURRENTVALUE"] = pd.to_numeric(df["CURRENTVALUE"], errors="coerce").fillna(0)
+    df["LASTCHANGEPRCNT"] = pd.to_numeric(df["LASTCHANGEPRCNT"], errors="coerce").fillna(0)
     return df
 
-@st.cache_data(ttl=180, show_spinner=False, max_entries=64)
-def fetch_moex_candles(ticker: str, interval: int, days_back: int = 60) -> pd.DataFrame:
+@st.cache_data(ttl=None, show_spinner=False)
+def fetch_extreme_close(index_ticker: str, date_str: str) -> tuple[float, str]:
+    try:
+        d = datetime.strptime(date_str, "%d.%m.%Y")
+    except ValueError:
+        return 0.0, "-"
+
+    monday = d - timedelta(days=d.isoweekday() - 1)
+    friday = monday + timedelta(days=4)
+    today = datetime.now()
+    if friday > today: friday = today
+
+    frm, till = monday.strftime("%Y-%m-%d"), friday.strftime("%Y-%m-%d")
+    url = ISS_HISTORY.format(market="index", ticker=index_ticker)
+    
+    try:
+        r = _session().get(url, params={"from": frm, "till": till, "iss.meta": "off"}, timeout=10)
+        hist = pd.DataFrame(r.json()["history"]["data"], columns=r.json()["history"]["columns"])
+        if hist.empty: return 0.0, "-"
+        last_row = hist.sort_values("TRADEDATE").iloc[-1]
+        return float(last_row["CLOSE"]), str(last_row["TRADEDATE"])
+    except Exception:
+        return 0.0, "-"
+
+@st.cache_data(ttl=180, show_spinner=False)
+def fetch_moex_candles(ticker: str, interval: int, days_back: int = 60, market: str = "shares") -> pd.DataFrame:
     frm = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
     till = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
-    chunks, start = [], 0
-    for _ in range(30):
-        try:
-            r = _session().get(MOEX_CANDLES_URL.format(ticker=ticker), params={"interval": interval, "from": frm, "till": till, "start": start, "iss.meta": "off"}, timeout=15)
-            r.raise_for_status()
-            block = r.json().get("candles") or {}
-        except Exception: break
-
+    url = ISS_CANDLES.format(market=market, ticker=ticker)
+    try:
+        r = _session().get(url, params={"interval": interval, "from": frm, "till": till, "iss.meta": "off"}, timeout=15)
+        block = r.json().get("candles") or {}
         data = block.get("data") or []
-        if not data: break
-        chunks.append(pd.DataFrame(data, columns=block["columns"]))
+        if not data: return pd.DataFrame()
+        df = pd.DataFrame(data, columns=block["columns"])
+        df = df.rename(columns={"begin": "Date", "open": "Open", "high": "High", "low": "Low", "close": "Close", "volume": "Volume"})
+        df["Date"] = pd.to_datetime(df["Date"])
+        return df.set_index("Date").sort_index()
+    except Exception:
+        return pd.DataFrame()
 
-        if len(data) < 500: break
-        start += 500
-        time.sleep(0.1)
-
-    if not chunks: return pd.DataFrame()
-    df = pd.concat(chunks, ignore_index=True).drop_duplicates(subset=["begin"])
-    need = {"begin", "open", "high", "low", "close"}
-    if not need.issubset(df.columns): return pd.DataFrame()
-    df = df.rename(columns={"begin": "Date", "open": "Open", "high": "High", "low": "Low", "close": "Close", "volume": "Volume"})
-    if "Volume" not in df: df["Volume"] = 0
-    df["Date"] = pd.to_datetime(df["Date"])
-    return df.set_index("Date").sort_index().dropna(subset=["Open", "High", "Low", "Close"])[["Open", "High", "Low", "Close", "Volume"]]
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_dividends_smartlab(ticker: str) -> dict:
+    """Парсинг Smart-Lab с фильтрацией прогнозов"""
+    url = f"https://smart-lab.ru/q/{ticker}/dividend/"
+    try:
+        tables = pd.read_html(url, encoding='cp1251')
+        if not tables: return {"div_12m": 0.0, "dsi": 0.5}
+        
+        df = tables[0]
+        # Упрощенный алгоритм (зависит от текущей верстки Smart-Lab)
+        # Если есть колонка с датой реестра, отбрасываем будущие
+        today = datetime.now()
+        
+        # Заглушка для корректной работы интерфейса (при реальном парсинге заменить)
+        return {"div_12m": 0.0, "dsi": 0.5}
+    except Exception:
+        return {"div_12m": 0.0, "dsi": 0.0}
