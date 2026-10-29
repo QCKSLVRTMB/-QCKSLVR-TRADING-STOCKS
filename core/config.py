@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-SCHEMA_VERSION = 4 # Версия изменилась из-за смены ТФ
+SCHEMA_VERSION = 5 # Версия обновлена
 APP_TITLE = "Калькулятор акций MOEX"
 
 TREND_VALUES = ["вверх", "вниз", "рейндж"]
@@ -11,7 +11,6 @@ DEFAULT_CB_RATE = 14.00
 DEFAULT_CASH_RESERVE = 20.0
 DEFAULT_TAX_RATE = 13.0
 
-# Таймфреймы: W, D1, H1 (M10 убран)
 INTERVALS = {
     "W":   {"interval": 7,  "days_back": 3650, "is_intraday": False, "label": "W (Недели)"},
     "D1":  {"interval": 24, "days_back": 730,  "is_intraday": False, "label": "D1 (Дни)"},
@@ -28,7 +27,6 @@ TOOLS = {
     "cluster_range": "Диапазон кластеров"
 }
 
-# Тарифы для расчета комиссий (Акции)
 TARIFF_CONFIGS = {
     "Т-Инвестиции": {"type": "percent", "broker_percent": 0.0004, "min_fee": 0.01},
     "Финам": {"type": "percent", "broker_percent": 0.0003, "min_fee": 0.01},
@@ -49,11 +47,17 @@ INDEX_META = {
     "MREDC":  {"name": "Недвижимость", "color": "#FFFFFF"},
 }
 
+# Дефолтные W-формации
 DEFAULT_W_FORMATIONS = {
     "ABIO": "вверх", "ABRD": "вверх", "AFKS": "вниз", "AFLT": "вверх", 
     "AKRN": "вверх", "ALRS": "вверх", "AMEZ": "вверх", "APTK": "вниз",
     "GAZP": "вниз", "SBER": "вверх", "LKOH": "вверх", "TATN": "вверх",
     "ROSN": "вниз", "NVTK": "вверх", "SIBN": "вверх", "TRNFP": "вверх"
+}
+
+# Дефолтные группы Арсагеры (1, 2, 3, 4). Если тикера нет - 0 баллов.
+DEFAULT_ARSAGERA_GROUPS = {
+    "LKOH": 1, "SBER": 1, "GAZP": 1, "ROSN": 1, "TATN": 1, "NVTK": 1
 }
 
 DEFAULT_GLOBAL = {
@@ -65,6 +69,7 @@ DEFAULT_GLOBAL = {
     "mobile_view": False,
     "active_tickers": [],
     "w_formations": DEFAULT_W_FORMATIONS,
+    "arsagera_groups": DEFAULT_ARSAGERA_GROUPS,
     "sector_weights": {"Нефтегаз": 35, "Финансы": 25, "Металлы": 30, "Разное": 10},
-    "portfolio_data": {} 
+    "portfolio_data": [] 
 }
