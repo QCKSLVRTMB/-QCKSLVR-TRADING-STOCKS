@@ -21,6 +21,46 @@ def _session() -> requests.Session:
     s.mount("https://", HTTPAdapter(max_retries=Retry(total=3, backoff_factor=0.5)))
     return s
 
+# ==========================================
+# ПАРСЕР EXCEL ФАЙЛА
+# ==========================================
+def parse_sources_excel(file) -> tuple[dict, dict]:
+    """Читает Источники.xlsx и возвращает (ars_dict, dohod_dict)"""
+    ars_dict = {}
+    dohod_dict = {}
+    
+    try:
+        # 1. Парсим Арсагеру
+        df_ars = pd.read_excel(file, sheet_name="Рейтинг арсагера", header=2)
+        for _, row in df_ars.iterrows():
+            # Блок 1 (1 группа)
+            if pd.notna(row.iloc[0]) and row.iloc[3] == 1: ars_dict[str(row.iloc[0]).strip()] = 1
+            # Блок 2 (2 группа)
+            if pd.notna(row.iloc[5]) and row.iloc[8] == 2: ars_dict[str(row.iloc[5]).strip()] = 2
+            # Блок 3 (3 группа)
+            if pd.notna(row.iloc[10]) and row.iloc[13] == 3: ars_dict[str(row.iloc[10]).strip()] = 3
+            # Блок 4 (4 группа)
+            if pd.notna(row.iloc[15]) and row.iloc[18] == 4: ars_dict[str(row.iloc[15]).strip()] = 4
+            
+        # 2. Парсим Dohod
+        df_dohod = pd.read_excel(file, sheet_name="ДОХОД DSI")
+        # Оставляем только строки "всего 12м"
+        df_dohod = df_dohod[df_dohod["Период"].astype(str).str.contains("12м", na=False)]
+        
+        for _, row in df_dohod.iterrows():
+            name = str(row["Акция"]).strip().upper()
+            div = float(row["Выплата на акцию (прогноз)"]) if pd.notna(row["Выплата на акцию (прогноз)"]) else 0.0
+            dsi = float(row["DSI"]) if pd.notna(row["DSI"]) else 0.0
+            dohod_dict[name] = {"div": div, "dsi": dsi}
+            
+    except Exception as e:
+        st.error(f"Ошибка чтения файла: {e}")
+        
+    return ars_dict, dohod_dict
+
+# ==========================================
+# ЗАГРУЗКА С MOEX
+# ==========================================
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_moex_stocks() -> pd.DataFrame:
     try:
@@ -138,32 +178,20 @@ def fetch_all_closes_on_date(date_val) -> dict[str, float]:
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def fetch_dividends_dohod(ticker: str) -> dict:
+    """Резервный парсер dohod.ru, если файл не загружен"""
     url = f"https://www.dohod.ru/ik/analytics/dividend/{ticker.lower()}"
     result = {"div_12m": 0.0, "dsi": 0.0}
-    
     try:
         r = _session().get(url, timeout=15)
-        if r.status_code != 200:
-            return result
-
+        if r.status_code != 200: return result
         soup = BeautifulSoup(r.text, 'html.parser')
         text = soup.get_text(separator=' ', strip=True)
-
-        # 1. Поиск DSI (ищем "индекс DSI" и берем первое число после него)
-        dsi_match = re.search(r'индекс\s*DSI[^0-9]*([0-9]+[.,][0-9]+)', text, re.IGNORECASE)
-        if dsi_match:
-            result["dsi"] = float(dsi_match.group(1).replace(',', '.'))
-        else:
-            # Резервный вариант: ищем просто "DSI" и число
-            dsi_match_alt = re.search(r'DSI[^0-9]*([0-9]+[.,][0-9]+)', text, re.IGNORECASE)
-            if dsi_match_alt:
-                result["dsi"] = float(dsi_match_alt.group(1).replace(',', '.'))
-
-        # 2. Поиск суммы дивидендов за 12 месяцев
+        
         div_match = re.search(r'Совокупные дивиденды в следующие 12m:\s*([0-9]+[.,]?[0-9]*)\s*руб', text, re.IGNORECASE)
-        if div_match:
-            result["div_12m"] = float(div_match.group(1).replace(',', '.'))
-
+        if div_match: result["div_12m"] = float(div_match.group(1).replace(',', '.'))
+        
+        dsi_match = re.search(r'DSI[^0-9]*([0-9]+[.,][0-9]+)', text, re.IGNORECASE)
+        if dsi_match: result["dsi"] = float(dsi_match.group(1).replace(',', '.'))
         return result
     except Exception:
         return result
