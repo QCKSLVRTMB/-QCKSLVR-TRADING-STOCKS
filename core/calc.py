@@ -4,9 +4,6 @@ import numpy as np
 import pandas as pd
 from core.config import TARIFF_CONFIGS
 
-# ======================================================================
-#  INSTRUMENT (Для акций)
-# ======================================================================
 @dataclass(slots=True)
 class Instrument:
     ticker: str
@@ -45,14 +42,10 @@ def get_instrument(ticker, df_stocks) -> Instrument:
         decimals=int(r["DECIMALS"]), list_level=int(r["LISTLEVEL"])
     )
 
-# ======================================================================
-#  РАСЧЕТ СДЕЛКИ
-# ======================================================================
 def commission_per_side(inst: Instrument, price: float, tariff_name: str) -> float:
-    # Упрощенный расчет комиссии для акций
     cfg = TARIFF_CONFIGS.get(tariff_name) or {"broker_percent": 0.0005}
     fee = price * inst.point_value * cfg["broker_percent"]
-    return max(fee, 0.01) # Минимальная комиссия
+    return max(fee, 0.01)
 
 def calc_avg_entry(entries: list[dict], default_price: float) -> tuple[float, int]:
     s_pq = s_q = s_p = 0.0
@@ -71,26 +64,18 @@ def calc_avg_entry(entries: list[dict], default_price: float) -> tuple[float, in
 
 def plan_trade(inst: Instrument, *, direction: str, entries: list[dict], sl: float | None, tp: float | None, deposit: float, tariff: str) -> dict:
     entry, user_qty = calc_avg_entry(entries, inst.price)
-    
-    # Стоимость 1 лота
     lot_val = entry * inst.lot_size
-    
-    # Максимальное количество лотов на депозит
     qty_by_margin = int(deposit // lot_val) if lot_val > 0 else 0
     qty = user_qty if user_qty > 0 else qty_by_margin
-    
     total_value = lot_val * qty
     fee_entry = commission_per_side(inst, entry, tariff) * qty
     
     return {
         "entry": entry, "sl": sl, "tp": tp, "qty": qty,
         "notional": total_value, "fee": fee_entry,
-        "margin_total": total_value, # Для акций ГО = стоимость
+        "margin_total": total_value,
     }
 
-# ======================================================================
-#  АНАЛИТИКА ГРАФИКОВ И ОБЪЕМОВ
-# ======================================================================
 class _Bars:
     __slots__ = ("idx", "high", "low", "vol", "cvol")
     def __init__(self, df: pd.DataFrame):
@@ -164,7 +149,8 @@ def analyze_manual_zigzag(pts, df):
     return breakouts
 
 def _anomaly_color(tf_name: str) -> str | None:
-    return {"M10": "red", "M1": "red", "H1": "green", "D1": "blue", "W": "purple"}.get(tf_name)
+    # H1 - младший (красный), D1 - средний (зеленый), W - старший (фиолетовый/синий)
+    return {"H1": "red", "D1": "green", "W": "blue"}.get(tf_name)
 
 def get_volume_colors(df, tf_name, sensitivity=3.0):
     if df is None or df.empty or "Volume" not in df.columns: return []
@@ -185,7 +171,7 @@ def get_volume_colors(df, tf_name, sensitivity=3.0):
         colors[mask] = anomaly
     return colors.tolist()
 
-def calculate_volume_profile(df, tf_name="M10", threshold_pct=50, sensitivity=3.0, colors=None):
+def calculate_volume_profile(df, tf_name="H1", threshold_pct=50, sensitivity=3.0, colors=None):
     if df is None or df.empty or "Volume" not in df.columns: return []
     colors = np.asarray(colors if colors is not None else get_volume_colors(df, tf_name, sensitivity), dtype=object)
     if colors.size != len(df): return []
