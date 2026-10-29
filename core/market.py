@@ -21,8 +21,6 @@ def _session() -> requests.Session:
     s.mount("https://", HTTPAdapter(max_retries=Retry(total=3, backoff_factor=0.5)))
     return s
 
-# ... (функции fetch_moex_stocks, fetch_moex_indices, fetch_extreme_close, fetch_all_closes_on_date остаются без изменений) ...
-
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_moex_stocks() -> pd.DataFrame:
     try:
@@ -150,12 +148,25 @@ def fetch_dividends_dohod(ticker: str) -> dict:
 
         soup = BeautifulSoup(r.text, 'html.parser')
         text = soup.get_text(separator=' ', strip=True)
-        
-        # 1. Поиск DSI (очень надежный regex)
-        # Ищем слово DSI, затем любые символы, затем число
-        dsi_match = re.search(r'DSI.*?([0-9]+[.,][0-9]+)', text, re.IGNORECASE)
-        if dsi_match:
-            result["dsi"] = float(dsi_match.group(1).replace(',', '.'))
+
+        # 1. Умный поиск DSI
+        # Ищем упоминание DSI и берем число, которое находится в пределах 15 символов от него
+        for match in re.finditer(r'DSI', text, re.IGNORECASE):
+            start = max(0, match.start() - 20)
+            end = min(len(text), match.end() + 30)
+            snippet = text[start:end]
+            
+            # Ищем число с точкой или запятой
+            val_match = re.search(r'([0-9][.,][0-9]{1,2})', snippet)
+            if val_match:
+                try:
+                    val = float(val_match.group(1).replace(',', '.'))
+                    # DSI всегда от 0 до 1.0
+                    if 0.0 <= val <= 1.0:
+                        result["dsi"] = val
+                        break
+                except ValueError:
+                    pass
 
         # 2. Поиск суммы дивидендов за 12 месяцев
         div_match = re.search(r'Совокупные дивиденды в следующие 12m:\s*([0-9]+[.,]?[0-9]*)\s*руб', text, re.IGNORECASE)
