@@ -1,4 +1,4 @@
-"""Персистентность: схема v3, миграция, атомарная запись, debounce."""
+"""Персистентность: схема v6, миграция, атомарная запись, debounce."""
 from __future__ import annotations
 
 import json, os, re, tempfile, time
@@ -59,17 +59,13 @@ def _normalize_ticker(raw: dict) -> dict:
     if not isinstance(raw, dict): return base
     
     base["market"].update({k: v for k, v in (raw.get("market") or {}).items() if v})
-    
-    charts_raw = raw.get("charts") or {}
-    for tf in TIMEFRAMES:
+    for tf, tools in (raw.get("charts") or {}).items():
         if tf not in base["charts"]: continue
-        tools_raw = charts_raw.get(tf) or {}
-        for tool in base["charts"][tf].keys():
-            if tool in tools_raw:
-                if tool == "levels":
-                    base["charts"][tf]["levels"] = sorted({round(float(v), 8) for v in (tools_raw.get(tool) or []) if v is not None})
-                else:
-                    base["charts"][tf][tool] = normalize_points(tools_raw.get(tool))
+        for tool, pts in (tools or {}).items():
+            if tool == "levels":
+                base["charts"][tf]["levels"] = sorted({round(float(v), 8) for v in (pts or []) if v is not None})
+            elif tool in base["charts"][tf]:
+                base["charts"][tf][tool] = normalize_points(pts)
                 
     base["buy_level"] = raw.get("buy_level")
     base["sell_level"] = raw.get("sell_level")
@@ -86,7 +82,6 @@ def migrate(raw: dict) -> dict:
     st_ = default_state()
     st_["global"].update({k: v for k, v in (raw.get("global") or {}).items() if k in DEFAULT_GLOBAL})
     
-    # Фильтруем None из ключей тикеров
     raw_tickers = raw.get("tickers") or {}
     st_["tickers"] = {str(k): _normalize_ticker(v) for k, v in raw_tickers.items() if k is not None}
     
@@ -131,12 +126,12 @@ def dumps(state: dict, pretty: bool = True) -> str:
     if "tickers" in state:
         state["tickers"] = {str(k): v for k, v in state["tickers"].items() if k is not None}
 
+    # УБРАН sort_keys=True, чтобы избежать ошибок сравнения типов
     return json.dumps(
         state, 
         ensure_ascii=False, 
         indent=2 if pretty else None,
         separators=None if pretty else (",", ":"), 
-        sort_keys=True, 
         default=json_serializer
     )
 
