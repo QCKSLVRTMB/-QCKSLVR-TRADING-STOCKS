@@ -1,10 +1,9 @@
 from __future__ import annotations
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 import pandas as pd
 import requests
 import streamlit as st
 from requests.adapters import HTTPAdapter, Retry
-import io
 from core.config import INDEX_META
 
 ISS_SHARES = "https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/securities.json?iss.meta=off&iss.only=securities,marketdata&limit=1000"
@@ -32,7 +31,7 @@ def fetch_moex_stocks() -> pd.DataFrame:
 
     # Защита от отсутствия колонок
     for col in ["LOTSIZE", "MINSTEP", "PREVPRICE", "LISTLEVEL", "ISSUESIZE", "DECIMALS", "SECID", "SHORTNAME"]:
-        if col not in sec.columns: sec[col] = 0 if col != "SECID" and col != "SHORTNAME" else ""
+        if col not in sec.columns: sec[col] = 0 if col not in ["SECID", "SHORTNAME"] else ""
     for col in ["LAST", "VALTODAY", "LASTCHANGEPRCNT", "NUMTRADES", "SECID"]:
         if col not in mkt.columns: mkt[col] = 0 if col != "SECID" else ""
 
@@ -59,7 +58,7 @@ def fetch_moex_indices() -> pd.DataFrame:
 
     valid_tickers = ["IMOEX"] + list(INDEX_META.keys())
     
-    # Защита: если блок marketdata пустой или нет нужных колонок
+    # Защита от пустых данных
     if "SECID" not in mkt.columns: mkt["SECID"] = ""
     if "CURRENTVALUE" not in mkt.columns: mkt["CURRENTVALUE"] = 0.0
     if "LASTCHANGEPRCNT" not in mkt.columns: mkt["LASTCHANGEPRCNT"] = 0.0
@@ -73,10 +72,18 @@ def fetch_moex_indices() -> pd.DataFrame:
     return df
 
 @st.cache_data(ttl=None, show_spinner=False)
-def fetch_extreme_close(index_ticker: str, date_str: str) -> tuple[float, str]:
+def fetch_extreme_close(index_ticker: str, date_val) -> tuple[float, str]:
     try:
-        d = datetime.strptime(date_str, "%d.%m.%Y")
-    except ValueError:
+        # Обработка разных типов даты (строка или date/datetime)
+        if isinstance(date_val, str):
+            d = datetime.strptime(date_val, "%d.%m.%Y")
+        elif isinstance(date_val, datetime):
+            d = date_val
+        elif isinstance(date_val, date):
+            d = datetime.combine(date_val, datetime.min.time())
+        else:
+            return 0.0, "-"
+    except Exception:
         return 0.0, "-"
 
     monday = d - timedelta(days=d.isoweekday() - 1)
