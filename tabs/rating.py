@@ -20,7 +20,6 @@ def render_rating():
         st.warning("Пожалуйста, загрузите файл 'Источники.xlsx' в боковом меню для формирования рейтинга.")
         return
 
-    # Фильтруем акции: оставляем только те, что есть в Арсагере или в Dohod
     whitelist = get_whitelist(df_stocks, ars_data, dohod_data)
     df_stocks = df_stocks[df_stocks["SECID"].isin(whitelist)]
 
@@ -84,7 +83,7 @@ def render_rating():
             "Вид актива": lambda x: "",
             "Формация": lambda x: "",
             "В составе индекса": lambda x: "",
-            "Сила актива": lambda x: "",
+            "Сила актива": "{:+.2f}%", # Добавлен знак плюс
             "Дивидендная доходность (по рынку)": "{:.2f}%",
             "Арсагера": "{:.0f}",
             "DSI": "{:.2f}",
@@ -95,7 +94,6 @@ def render_rating():
         })
     )
 
-    # Берем длину из display_df, а не из styled_df
     table_height = (len(display_df) + 1) * 35 + 10
 
     st.dataframe(
