@@ -13,14 +13,12 @@ ISS_SHARES = "https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/
 ISS_INDICES = "https://iss.moex.com/iss/engines/stock/markets/index/securities.json?iss.meta=off&iss.only=securities,marketdata"
 ISS_CANDLES = "https://iss.moex.com/iss/engines/stock/markets/{market}/securities/{ticker}/candles.json"
 ISS_HISTORY = "https://iss.moex.com/iss/history/engines/stock/markets/{market}/securities/{ticker}.json"
-ISS_DIVIDENDS = "https://iss.moex.com/iss/securities/{ticker}/dividends.json?iss.meta=off"
-ISS_BULK_HISTORY = "https://iss.moex.com/iss/history/engines/stock/markets/shares/boards/TQBR/securities.json"
 
 @st.cache_resource(show_spinner=False)
 def _session() -> requests.Session:
     s = requests.Session()
     s.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"})
-    s.mount("https://", HTTPAdapter(max_retries=Retry(total=2, backoff_factor=0.5)))
+    s.mount("https://", HTTPAdapter(max_retries=Retry(total=3, backoff_factor=0.5)))
     return s
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -107,139 +105,103 @@ def fetch_extreme_close(ticker: str, date_val, market: str = "index") -> tuple[f
     except Exception:
         return 0.0, "-"
 
-@st.cache_data(ttl=None, show_spinner=False)
-def fetch_all_closes_on_date(date_val) -> dict:
-    """Загружает цены закрытия ВСЕХ акций на конкретную дату ОДНИМ запросом."""
-    try:
-        if isinstance(date_val, str):
-            d = datetime.strptime(date_val, "%d.%m.%Y")
-        else:
-            d = date_val
-            
-        monday = d - timedelta(days=d.isoweekday() - 1)
-        friday = monday + timedelta(days=4)
-        today = datetime.now()
-        if friday > today: friday = today
-        
-        date_str = friday.strftime("%Y-%m-%d")
-        
-        r = _session().get(ISS_BULK_HISTORY, params={"date": date_str, "iss.meta": "off"}, timeout=15)
-        block = r.json().get("history", {})
-        data = block.get("data", [])
-        cols = block.get("columns", [])
-        
-        if not data or not cols: return {}
-        
-        try:
-            secid_idx = cols.index("SECID")
-            close_idx = cols.index("CLOSE")
-        except ValueError:
-            return {}
-            
-        return {row[secid_idx]: float(row[close_idx]) for row in data if row[close_idx] is not None}
-    except Exception:
-        return {}
-
-@st.cache_data(ttl=86400, show_spinner=False)
-def fetch_dividends_moex(ticker: str) -> float:
-    url = ISS_DIVIDENDS.format(ticker=ticker)
-    try:
-        r = _session().get(url, timeout=5)
-        block = r.json().get("dividends", {})
-        cols = block.get("columns", [])
-        data = block.get("data", [])
-        if not data or not cols: return 0.0
-
-        date_idx, val_idx = None, None
-        for i, c in enumerate(cols):
-            c_lower = c.lower()
-            if c_lower == "registryclosedate": date_idx = i
-            elif c_lower == "value": val_idx = i
-            
-        if date_idx is None or val_idx is None: return 0.0
-
-        today = datetime.now().date()
-        one_year_ago = today - timedelta(days=365)
-        total_div = 0.0
-        
-        for row in data:
-            reg_date_str = row[date_idx]
-            val = row[val_idx]
-            if reg_date_str and val:
-                try:
-                    reg_date = datetime.strptime(str(reg_date_str)[:10], "%Y-%m-%d").date()
-                    if one_year_ago <= reg_date <= today:
-                        total_div += float(val)
-                except Exception: pass
-        return total_div
-    except Exception:
-        return 0.0
-
 @st.cache_data(ttl=86400, show_spinner=False)
 def fetch_dividends_dohod(ticker: str) -> dict:
+    """Парсинг dohod.ru через BeautifulSoup с явным поиском колонок."""
     url = f"https://www.dohod.ru/ik/analytics/dividend/{ticker.lower()}"
-    result = {"div_12m": 0.0, "dsi": 0.0, "source": "none"}
+    # Если страница с тикером не работает, используем общую
+    fallback_url = "https://www.dohod.ru/ik/analytics/dividend"
     
-    # Уменьшен таймаут до 3 секунд
-    try:
-        r = _session().get(url, timeout=3)
-        if r.status_code == 200:
+    result = {"div_12m": 0.0, "dsi": 0.0}
+    
+    for attempt_url in [url, fallback_url]:
+        try:
+            r = _session().get(attempt_url, timeout=15)
+            if r.status_code != 200: continue
+
             soup = BeautifulSoup(r.text, 'html.parser')
+            
+            # 1. Поиск DSI в тексте (если есть)
             text = soup.get_text()
             dsi_match = re.search(r'DSI[^0-9]*([0-9]+[.,][0-9]+)', text)
             if dsi_match:
                 result["dsi"] = float(dsi_match.group(1).replace(',', '.'))
 
-            tables = pd.read_html(r.text)
+            # 2. Поиск таблицы с id="table-dividend"
+            table = soup.find('table', id='table-dividend')
+            if not table:
+                continue
+
+            # Извлекаем заголовки
+            headers = [th.get_text(strip=True) for th in table.find_all('th')]
+            # Ищем индексы нужных колонок
+            idx_ticker = next((i for i, h in enumerate(headers) if 'Акция' in h or 'Тикер' in h), None)
+            idx_value = next((i for i, h in enumerate(headers) if 'Выплата на акцию' in h or 'Дивиденд' in h), None)
+            idx_date = next((i for i, h in enumerate(headers) if 'Дата закрытия реестра' in h), None)
+            idx_dsi = next((i for i, h in enumerate(headers) if 'DSI' in h), None)
+
+            if idx_ticker is None or idx_value is None or idx_date is None:
+                continue
+
+            # Парсим строки
             today = datetime.now().date()
             one_year_ago = today - timedelta(days=365)
             total_div = 0.0
+            found_ticker = False
 
-            for df in tables:
-                cols_lower = [str(c).lower() for c in df.columns]
-                if any('дата' in c for c in cols_lower) and any('дивиденд' in c or 'выплата' in c for c in cols_lower):
-                    date_col = next((i for i, c in enumerate(cols_lower) if 'дата' in c), None)
-                    val_col = next((i for i, c in enumerate(cols_lower) if 'дивиденд' in c or 'выплата' in c), None)
-                    
-                    if date_col is not None and val_col is not None:
-                        for _, row in df.iterrows():
-                            date_str = str(row.iloc[date_col])
-                            val_str = str(row.iloc[val_col]).replace(',', '.').replace(' ', '').replace('₽', '')
-                            
-                            date_match = re.search(r'(\d{2}\.\d{2}\.\d{4})', date_str)
-                            if date_match:
-                                try:
-                                    reg_date = datetime.strptime(date_match.group(1), "%d.%m.%Y").date()
-                                    if one_year_ago <= reg_date <= today:
-                                        clean_val = re.sub(r'[^\d.]', '', val_str)
-                                        if clean_val: total_div += float(clean_val)
-                                except Exception: pass
-                        
-                        if total_div > 0:
-                            result["div_12m"] = total_div
-                            result["source"] = "dohod"
-                            return result
-    except Exception:
-        pass
+            for row in table.find('tbody').find_all('tr'):
+                cells = row.find_all('td')
+                if len(cells) <= max(idx_ticker, idx_value, idx_date):
+                    continue
 
-    # Резервный MOEX ISS
-    try:
-        moex_div = fetch_dividends_moex(ticker)
-        if moex_div > 0:
-            result["div_12m"] = moex_div
-            result["source"] = "moex"
-    except Exception:
-        pass
+                ticker_text = cells[idx_ticker].get_text(strip=True).upper()
+                # Ищем нужный тикер (может быть с суффиксом)
+                if ticker.upper() not in ticker_text:
+                    continue
+
+                found_ticker = True
+                
+                # DSI для этого тикера
+                if idx_dsi is not None and idx_dsi < len(cells):
+                    dsi_text = cells[idx_dsi].get_text(strip=True).replace(',', '.')
+                    try:
+                        result["dsi"] = float(dsi_text)
+                    except:
+                        pass
+
+                # Дата и сумма
+                date_text = cells[idx_date].get_text(strip=True)
+                val_text = cells[idx_value].get_text(strip=True).replace(' ', '').replace('₽', '').replace(',', '.')
+
+                try:
+                    date_match = re.search(r'(\d{2}\.\d{2}\.\d{4})', date_text)
+                    if date_match:
+                        reg_date = datetime.strptime(date_match.group(1), "%d.%m.%Y").date()
+                        if one_year_ago <= reg_date <= today:
+                            clean_val = re.sub(r'[^\d.]', '', val_text)
+                            if clean_val:
+                                total_div += float(clean_val)
+                except Exception:
+                    pass
+
+            if found_ticker:
+                result["div_12m"] = total_div
+                return result
+
+        except Exception:
+            continue
 
     return result
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def fetch_dividends_smartlab(ticker: str) -> dict:
+    """Парсинг Smart-Lab для получения брутто/нетто дивидендов (для портфеля)."""
     url = f"https://smart-lab.ru/q/{ticker}/dividend/"
     result = {"div_gross": 0.0, "div_net": 0.0, "tax": 0.13}
     try:
         tables = pd.read_html(url, encoding='cp1251')
         if not tables: return result
+        # Заглушка: логика парсинга Smart-Lab для брутто/нетто
         return result
     except Exception:
         return result
