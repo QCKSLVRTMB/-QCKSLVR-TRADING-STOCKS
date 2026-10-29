@@ -3,6 +3,7 @@ import plotly.graph_objects as go
 import pandas as pd
 from core.config import INDEX_META
 from core.market import fetch_moex_indices, fetch_extreme_close
+from core import state
 
 def render_indices():
     st.subheader("Эффективность отраслевых индексов")
@@ -11,7 +12,8 @@ def render_indices():
         st.warning("Нет данных по индексам.")
         return
 
-    extreme_date = st.session_state.get("sb_extreme", "20.07.2026") # Берем из виджета стейта
+    # Берем дату из state (она там всегда лежит в виде строки)
+    extreme_date = state.g("extreme_date") 
     
     # Получаем IMOEX на экстремуме
     imoex_ext, imoex_date = fetch_extreme_close("IMOEX", extreme_date)
