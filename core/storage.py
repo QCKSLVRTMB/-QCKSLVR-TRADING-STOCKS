@@ -1,4 +1,3 @@
-"""Персистентность: схема v6, миграция, атомарная запись, debounce."""
 from __future__ import annotations
 
 import json, os, re, tempfile, time
@@ -81,10 +80,8 @@ def migrate(raw: dict) -> dict:
     if not isinstance(raw, dict): return default_state()
     st_ = default_state()
     st_["global"].update({k: v for k, v in (raw.get("global") or {}).items() if k in DEFAULT_GLOBAL})
-    
     raw_tickers = raw.get("tickers") or {}
     st_["tickers"] = {str(k): _normalize_ticker(v) for k, v in raw_tickers.items() if k is not None}
-    
     st_["saved_at"] = raw.get("saved_at")
     return st_
 
@@ -122,18 +119,15 @@ def dumps(state: dict, pretty: bool = True) -> str:
     state["version"] = SCHEMA_VERSION
     state["saved_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
     
-    # На всякий случай приводим все ключи тикеров к строкам
     if "tickers" in state:
         state["tickers"] = {str(k): v for k, v in state["tickers"].items() if k is not None}
 
-    # УБРАН sort_keys=True, чтобы избежать ошибок сравнения типов
-    return json.dumps(
-        state, 
-        ensure_ascii=False, 
-        indent=2 if pretty else None,
-        separators=None if pretty else (",", ":"), 
-        default=json_serializer
-    )
+    # Убрали sort_keys=True, чтобы избежать TypeError с None
+    try:
+        return json.dumps(state, ensure_ascii=False, indent=2 if pretty else None,
+                          separators=None if pretty else (",", ":"), default=json_serializer)
+    except Exception:
+        return json.dumps(state, ensure_ascii=False, default=str)
 
 def save_profile(state: dict, profile: str = "default") -> None:
     _atomic_write(profile_path(profile), dumps(state))
