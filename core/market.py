@@ -175,6 +175,11 @@ def fetch_dividends_dohod(ticker: str) -> dict:
     except Exception:
         return result
 
+# ЗАГЛУШКА ДЛЯ SMART-LAB (чтобы portfolio.py не падал)
+@st.cache_data(ttl=86400, show_spinner=False)
+def fetch_dividends_smartlab(ticker: str) -> dict:
+    return {"div_gross": 0.0, "div_net": 0.0, "tax": 0.13}
+
 @st.cache_data(ttl=180, show_spinner=False)
 def fetch_moex_candles(ticker: str, interval: int, days_back: int = 60, market: str = "shares") -> pd.DataFrame:
     frm = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
@@ -210,7 +215,6 @@ def fetch_moex_candles(ticker: str, interval: int, days_back: int = 60, market: 
     return df.set_index("Date").sort_index().dropna(subset=["Open", "High", "Low", "Close"])[["Open", "High", "Low", "Close", "Volume"]]
 
 def parse_sources_excel(file) -> dict:
-    """Читает Excel-файл с листами W_Formations, Fundamentals, Portfolio."""
     result = {"w_formations": {}, "fundamental_data": {}, "portfolio_data": []}
     try:
         xls = pd.ExcelFile(file)
