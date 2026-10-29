@@ -21,6 +21,46 @@ def _session() -> requests.Session:
     s.mount("https://", HTTPAdapter(max_retries=Retry(total=3, backoff_factor=0.5)))
     return s
 
+# ==========================================
+# ПАРСЕР EXCEL ФАЙЛА
+# ==========================================
+def parse_sources_excel(file) -> tuple[dict, dict]:
+    """Читает Источники.xlsx и возвращает (ars_dict, dohod_dict)"""
+    ars_dict = {}
+    dohod_dict = {}
+    
+    try:
+        # 1. Парсим Арсагеру
+        df_ars = pd.read_excel(file, sheet_name="Рейтинг арсагера", header=2)
+        for _, row in df_ars.iterrows():
+            # Блок 1 (1 группа)
+            if pd.notna(row.iloc[0]) and row.iloc[3] == 1: ars_dict[str(row.iloc[0]).strip()] = 1
+            # Блок 2 (2 группа)
+            if pd.notna(row.iloc[5]) and row.iloc[8] == 2: ars_dict[str(row.iloc[5]).strip()] = 2
+            # Блок 3 (3 группа)
+            if pd.notna(row.iloc[10]) and row.iloc[13] == 3: ars_dict[str(row.iloc[10]).strip()] = 3
+            # Блок 4 (4 группа)
+            if pd.notna(row.iloc[15]) and row.iloc[18] == 4: ars_dict[str(row.iloc[15]).strip()] = 4
+            
+        # 2. Парсим Dohod
+        df_dohod = pd.read_excel(file, sheet_name="ДОХОД DSI")
+        # Оставляем только строки "всего 12м"
+        df_dohod = df_dohod[df_dohod["Период"].astype(str).str.contains("12м", na=False)]
+        
+        for _, row in df_dohod.iterrows():
+            name = str(row["Акция"]).strip().upper()
+            div = float(row["Выплата на акцию (прогноз)"]) if pd.notna(row["Выплата на акцию (прогноз)"]) else 0.0
+            dsi = float(row["DSI"]) if pd.notna(row["DSI"]) else 0.0
+            dohod_dict[name] = {"div": div, "dsi": dsi}
+            
+    except Exception as e:
+        st.error(f"Ошибка чтения файла: {e}")
+        
+    return ars_dict, dohod_dict
+
+# ==========================================
+# ЗАГРУЗКА С MOEX
+# ==========================================
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_moex_stocks() -> pd.DataFrame:
     try:
@@ -126,7 +166,6 @@ def fetch_all_closes_on_date(date_val) -> dict[str, float]:
         
         url = "https://iss.moex.com/iss/history/engines/stock/markets/shares/boards/TQBR/securities.json"
         
-        # ПОСТРАНИЧНАЯ ЗАГРУЗКА (чтобы получить ВСЕ акции)
         chunks = []
         start = 0
         for _ in range(30):
