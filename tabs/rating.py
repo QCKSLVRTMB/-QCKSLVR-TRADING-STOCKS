@@ -13,7 +13,6 @@ def render_rating():
         st.warning("Нет данных MOEX.")
         return
 
-    # Берем топ-50 по объему
     if "VALTODAY" in df_stocks.columns:
         df_stocks = df_stocks[df_stocks["VALTODAY"] > 0].sort_values("VALTODAY", ascending=False).head(50)
 
@@ -34,15 +33,18 @@ def render_rating():
     df = df.sort_values("total_score", ascending=False).reset_index(drop=True)
     df["№"] = df.index + 1
 
+    df["in_index_str"] = df["in_index"].map({True: "да", False: "нет"})
+
     display_df = pd.DataFrame({
         "№": df["№"],
         "Название": df["SHORTNAME"],
         "Тикер": df["SECID"],
         "Вид актива": df.apply(lambda r: get_asset_color(r["div_yield"], cb_rate, r["rel_strength"]), axis=1),
         "Формация": df["w_form"],
-        "В составе индекса": df["in_index"],
+        "В составе индекса": df["in_index_str"],
         "Сила актива": df["rel_strength"],
         "Дивидендная доходность (по рынку)": df["div_yield"],
+        "DSI": df["dsi"],
         "Тип листинга": df["LISTLEVEL"],
         "Сумма баллов": df["total_score"],
         "Рекомендуемая цена": df["recommended_price"]
@@ -51,21 +53,17 @@ def render_rating():
     def apply_styles(row):
         styles = [""] * len(row)
         
-        # Формация
         w = row["Формация"]
         if w == "вверх": styles[4] = "background-color: #4CAF50; color: #4CAF50;"
         elif w == "рейндж": styles[4] = "background-color: #2196F3; color: #2196F3;"
         elif w == "вниз": styles[4] = "background-color: #F44336; color: #F44336;"
         
-        # В составе индекса
-        if row["В составе индекса"]: styles[5] = "background-color: #4CAF50; color: #4CAF50;"
-        else: styles[5] = "background-color: #F44336; color: #F44336;"
+        if row["В составе индекса"] == "да": styles[5] = "background-color: #4CAF50; color: white;"
+        else: styles[5] = "background-color: #F44336; color: white;"
         
-        # Сила актива (текст белый, чтобы было видно число)
         if row["Сила актива"] > 0: styles[6] = "background-color: #4CAF50; color: white;"
         else: styles[6] = "background-color: #F44336; color: white;"
         
-        # Вид актива
         color = row["Вид актива"]
         if color == "green": styles[3] = "background-color: #4CAF50; color: #4CAF50;"
         elif color == "yellow": styles[3] = "background-color: #FFEB3B; color: #FFEB3B;"
@@ -80,9 +78,9 @@ def render_rating():
         .format({
             "Вид актива": lambda x: "",
             "Формация": lambda x: "",
-            "В составе индекса": lambda x: "",
             "Сила актива": "{:+.2f}%",
             "Дивидендная доходность (по рынку)": "{:.2f}%",
+            "DSI": "{:.2f}",
             "Тип листинга": "{:.0f}",
             "Сумма баллов": "{:.0f}",
             "Рекомендуемая цена": "{:.2f} ₽",
