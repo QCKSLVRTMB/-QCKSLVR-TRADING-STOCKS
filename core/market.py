@@ -139,74 +139,38 @@ def fetch_all_closes_on_date(date_val) -> dict[str, float]:
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def fetch_dividends_dohod(ticker: str) -> dict:
-    """Парсинг dohod.ru."""
+    """Парсинг dohod.ru через регулярные выражения по тексту страницы."""
     url = f"https://www.dohod.ru/ik/analytics/dividend/{ticker.lower()}"
-    fallback_url = "https://www.dohod.ru/ik/analytics/dividend"
-    
     result = {"div_12m": 0.0, "dsi": 0.0}
     
-    for attempt_url in [url, fallback_url]:
-        try:
-            r = _session().get(attempt_url, timeout=15)
-            if r.status_code != 200: continue
+    try:
+        r = _session().get(url, timeout=15)
+        if r.status_code != 200:
+            return result
 
-            soup = BeautifulSoup(r.text, 'html.parser')
-            text = soup.get_text()
-            dsi_match = re.search(r'DSI[^0-9]*([0-9]+[.,][0-9]+)', text)
-            if dsi_match:
-                result["dsi"] = float(dsi_match.group(1).replace(',', '.'))
+        soup = BeautifulSoup(r.text, 'html.parser')
+        text = soup.get_text(separator=' ', strip=True)
 
-            table = soup.find('table', id='table-dividend')
-            if not table: continue
+        # 1. Поиск DSI
+        # Ищем паттерн: "индекс DSI" и затем число
+        dsi_match = re.search(r'индекс\s*DSI[^\d]*([0-9]+[.,][0-9]+)', text, re.IGNORECASE)
+        if dsi_match:
+            result["dsi"] = float(dsi_match.group(1).replace(',', '.'))
 
-            headers = [th.get_text(strip=True) for th in table.find_all('th')]
-            idx_ticker = next((i for i, h in enumerate(headers) if 'Акция' in h or 'Тикер' in h), None)
-            idx_value = next((i for i, h in enumerate(headers) if 'Выплата на акцию' in h or 'Дивиденд' in h), None)
-            idx_date = next((i for i, h in enumerate(headers) if 'Дата закрытия реестра' in h), None)
-            idx_dsi = next((i for i, h in enumerate(headers) if 'DSI' in h), None)
+        # 2. Поиск суммы дивидендов за 12 месяцев
+        # Ищем "Совокупные дивиденды в следующие 12m: [число]"
+        div_match = re.search(r'Совокупные дивиденды в следующие 12m:\s*([0-9]+[.,]?[0-9]*)\s*руб', text, re.IGNORECASE)
+        if div_match:
+            result["div_12m"] = float(div_match.group(1).replace(',', '.'))
+        else:
+            # Запасной вариант: ищем "след 12m. (прогноз) | [число]"
+            div_match_alt = re.search(r'след\s*12m\.?\s*\(прогноз\)\s*\|\s*([0-9]+[.,]?[0-9]*)', text, re.IGNORECASE)
+            if div_match_alt:
+                result["div_12m"] = float(div_match_alt.group(1).replace(',', '.'))
 
-            if idx_ticker is None or idx_value is None or idx_date is None: continue
-
-            today = datetime.now().date()
-            one_year_ago = today - timedelta(days=365)
-            total_div = 0.0
-            found_ticker = False
-
-            for row in table.find('tbody').find_all('tr'):
-                cells = row.find_all('td')
-                if len(cells) <= max(idx_ticker, idx_value, idx_date): continue
-
-                ticker_text = cells[idx_ticker].get_text(strip=True).upper()
-                if ticker.upper() not in ticker_text: continue
-
-                found_ticker = True
-                
-                if idx_dsi is not None and idx_dsi < len(cells):
-                    dsi_text = cells[idx_dsi].get_text(strip=True).replace(',', '.')
-                    try: result["dsi"] = float(dsi_text)
-                    except: pass
-
-                date_text = cells[idx_date].get_text(strip=True)
-                val_text = cells[idx_value].get_text(strip=True).replace(' ', '').replace('₽', '').replace(',', '.')
-
-                try:
-                    date_match = re.search(r'(\d{2}\.\d{2}\.\d{4})', date_text)
-                    if date_match:
-                        reg_date = datetime.strptime(date_match.group(1), "%d.%m.%Y").date()
-                        if one_year_ago <= reg_date <= today:
-                            clean_val = re.sub(r'[^\d.]', '', val_text)
-                            if clean_val: total_div += float(clean_val)
-                except Exception:
-                    pass
-
-            if found_ticker:
-                result["div_12m"] = total_div
-                return result
-
-        except Exception:
-            continue
-
-    return result
+        return result
+    except Exception:
+        return result
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def fetch_dividends_smartlab(ticker: str) -> dict:
