@@ -149,26 +149,17 @@ def fetch_dividends_dohod(ticker: str) -> dict:
         soup = BeautifulSoup(r.text, 'html.parser')
         text = soup.get_text(separator=' ', strip=True)
 
-        # 1. Умный поиск DSI
-        # Ищем упоминание DSI и берем число, которое находится в пределах 15 символов от него
-        for match in re.finditer(r'DSI', text, re.IGNORECASE):
-            start = max(0, match.start() - 20)
-            end = min(len(text), match.end() + 30)
-            snippet = text[start:end]
-            
-            # Ищем число с точкой или запятой
-            val_match = re.search(r'([0-9][.,][0-9]{1,2})', snippet)
-            if val_match:
-                try:
-                    val = float(val_match.group(1).replace(',', '.'))
-                    # DSI всегда от 0 до 1.0
-                    if 0.0 <= val <= 1.0:
-                        result["dsi"] = val
-                        break
-                except ValueError:
-                    pass
+        # Поиск DSI: ищем слово DSI, затем первое число от 0 до 1
+        dsi_match = re.search(r'DSI.*?([0-1][.,][0-9]{1,2})', text, re.IGNORECASE)
+        if dsi_match:
+            result["dsi"] = float(dsi_match.group(1).replace(',', '.'))
+        else:
+            # Альтернативный поиск (если DSI написан с другими символами)
+            dsi_alt = re.search(r'([0-1][.,][0-9]{1,2})\s*DSI', text, re.IGNORECASE)
+            if dsi_alt:
+                result["dsi"] = float(dsi_alt.group(1).replace(',', '.'))
 
-        # 2. Поиск суммы дивидендов за 12 месяцев
+        # Поиск суммы дивидендов за 12 месяцев
         div_match = re.search(r'Совокупные дивиденды в следующие 12m:\s*([0-9]+[.,]?[0-9]*)\s*руб', text, re.IGNORECASE)
         if div_match:
             result["div_12m"] = float(div_match.group(1).replace(',', '.'))
