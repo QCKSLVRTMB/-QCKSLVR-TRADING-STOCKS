@@ -12,10 +12,7 @@ def render_indices():
         st.warning("Нет данных по индексам.")
         return
 
-    # Берем дату из state (она там всегда лежит в виде строки)
     extreme_date = state.g("extreme_date") 
-    
-    # Получаем IMOEX на экстремуме
     imoex_ext, imoex_date = fetch_extreme_close("IMOEX", extreme_date)
     
     if imoex_ext == 0:
@@ -55,7 +52,9 @@ def render_indices():
         st.warning("Не удалось рассчитать данные по отраслевым индексам.")
         return
     
-    # Строим график
+    # Сортировка от большего к меньшему
+    df = df.sort_values("rel", ascending=False).reset_index(drop=True)
+    
     fig = go.Figure()
     for _, r in df.iterrows():
         fig.add_trace(go.Bar(
