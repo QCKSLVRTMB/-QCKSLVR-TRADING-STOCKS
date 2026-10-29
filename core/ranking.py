@@ -18,7 +18,7 @@ def calc_ranking(df: pd.DataFrame, state_w_forms: dict, cb_rate: float, closes_o
     df["w_form"] = df["SECID"].map(w_forms).fillna("-")
     df["score_w"] = df["w_form"].map(w_scores).fillna(0)
     
-    # 2. Арсагера и DSI (строго из загруженного Excel)
+    # 2. Арсагера и DSI (из Excel)
     fund_data = state.g("fundamental_data", {})
     if not isinstance(fund_data, dict): fund_data = {}
     
@@ -34,7 +34,7 @@ def calc_ranking(df: pd.DataFrame, state_w_forms: dict, cb_rate: float, closes_o
     df["dsi"] = df["SECID"].apply(get_dsi_val)
     df["score_dsi"] = df["dsi"].fillna(0).clip(upper=1.0) * 100
     
-    # 3. Сила актива
+    # 3. Сила актива (ТОЧНЫЙ РАСЧЕТ)
     imoex_chg = (imoex_curr / imoex_ext - 1) if imoex_ext > 0 else 0.0
     
     def get_rel_strength(row):
@@ -52,7 +52,7 @@ def calc_ranking(df: pd.DataFrame, state_w_forms: dict, cb_rate: float, closes_o
     df["rel_strength"] = df.apply(get_rel_strength, axis=1)
     df["score_strength"] = (df["rel_strength"] > 0).astype(int) * 100
     
-    # 4. Дивиденды (Сумма за 12м)
+    # 4. Дивиденды по рынку
     def get_div_12m(ticker):
         res = fetch_dividends_dohod(ticker)
         return res.get("div_12m", 0.0)
