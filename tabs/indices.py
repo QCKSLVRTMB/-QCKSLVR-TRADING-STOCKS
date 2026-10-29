@@ -11,7 +11,7 @@ def render_indices():
         st.warning("Нет данных по индексам.")
         return
 
-    extreme_date = st.session_state.get("extreme_date", "20.07.2026")
+    extreme_date = st.session_state.get("sb_extreme", "20.07.2026") # Берем из виджета стейта
     
     # Получаем IMOEX на экстремуме
     imoex_ext, imoex_date = fetch_extreme_close("IMOEX", extreme_date)
@@ -20,10 +20,16 @@ def render_indices():
         st.error(f"Не удалось получить данные IMOEX на {extreme_date}")
         return
         
-    st.info(f"IMOEX на {imoex_date}: {imoex_ext:.2f} п. | Текущий: {df_idx[df_idx['SECID']=='IMOEX']['CURRENTVALUE'].values[0]:.2f} п.")
+    imoex_row = df_idx[df_idx['SECID']=='IMOEX']
+    imoex_curr = imoex_row['CURRENTVALUE'].values[0] if not imoex_row.empty else 0
+    
+    if imoex_curr == 0:
+        st.warning("Текущее значение IMOEX не загружено (возможно, торги закрыты).")
+        return
+        
+    st.info(f"IMOEX на {imoex_date}: {imoex_ext:.2f} п. | Текущий: {imoex_curr:.2f} п.")
     
     rows = []
-    imoex_curr = df_idx[df_idx['SECID']=='IMOEX']['CURRENTVALUE'].values[0]
     imoex_chg = (imoex_curr / imoex_ext - 1) * 100 if imoex_ext else 0
     
     for ticker, meta in INDEX_META.items():
@@ -43,7 +49,9 @@ def render_indices():
             })
             
     df = pd.DataFrame(rows)
-    if df.empty: return
+    if df.empty: 
+        st.warning("Не удалось рассчитать данные по отраслевым индексам.")
+        return
     
     # Строим график
     fig = go.Figure()
