@@ -12,20 +12,26 @@ IMOEX_CONSTITUENTS = {
 def calc_ranking(df: pd.DataFrame, state_w_forms: dict, cb_rate: float, closes_on_extreme: dict, imoex_ext: float, imoex_curr: float) -> pd.DataFrame:
     df = df.copy()
     
-    # 1. W-формация (Защита от None)
+    # 1. W-формация
     user_w = state_w_forms if isinstance(state_w_forms, dict) else {}
     w_forms = {**DEFAULT_W_FORMATIONS, **user_w}
     w_scores = {"вверх": 100, "рейндж": 50, "вниз": 0}
     df["w_form"] = df["SECID"].map(w_forms).fillna("-")
     df["score_w"] = df["w_form"].map(w_scores).fillna(0)
     
-    # 2. Арсагера (Защита от None)
+    # 2. Арсагера (жесткая защита от пустых значений в старом профиле)
     user_ars = state.g("arsagera_groups")
     if not isinstance(user_ars, dict): user_ars = {}
     combined_ars = {**DEFAULT_ARSAGERA_GROUPS, **user_ars}
-        
+    
+    def get_ars(ticker):
+        val = combined_ars.get(ticker, 0)
+        if not val or val == 0:
+            val = DEFAULT_ARSAGERA_GROUPS.get(ticker, 0)
+        return val
+
     ars_scores = {1: 100, 2: 75, 3: 50, 4: 25}
-    df["ars_group"] = df["SECID"].map(combined_ars).fillna(0).astype(int)
+    df["ars_group"] = df["SECID"].apply(get_ars).astype(int)
     df["score_arsagera"] = df["ars_group"].map(ars_scores).fillna(0)
     
     # 3. Сила актива
@@ -59,7 +65,7 @@ def calc_ranking(df: pd.DataFrame, state_w_forms: dict, cb_rate: float, closes_o
     # 5. Выплаты
     df["score_paid_12m"] = (df["div_12m"] > 0).astype(int) * 100
     
-    # 6. DSI (жесткая защита)
+    # 6. DSI
     df["dsi"] = df["dsi"].clip(upper=1.0)
     df["score_dsi"] = df["dsi"].fillna(0) * 100
     
