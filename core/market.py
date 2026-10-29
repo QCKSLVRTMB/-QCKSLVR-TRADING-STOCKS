@@ -13,6 +13,7 @@ ISS_SHARES = "https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/
 ISS_INDICES = "https://iss.moex.com/iss/engines/stock/markets/index/securities.json?iss.meta=off&iss.only=securities,marketdata"
 ISS_CANDLES = "https://iss.moex.com/iss/engines/stock/markets/{market}/securities/{ticker}/candles.json"
 ISS_HISTORY = "https://iss.moex.com/iss/history/engines/stock/markets/{market}/securities/{ticker}.json"
+ISS_DIVIDENDS = "https://iss.moex.com/iss/securities/{ticker}/dividends.json?iss.meta=off"
 
 @st.cache_resource(show_spinner=False)
 def _session() -> requests.Session:
@@ -105,75 +106,108 @@ def fetch_extreme_close(ticker: str, date_val, market: str = "index") -> tuple[f
     except Exception:
         return 0.0, "-"
 
+# Вспомогательная функция для MOEX (Резервный источник)
 @st.cache_data(ttl=86400, show_spinner=False)
-def fetch_dividends_dohod(ticker: str) -> dict:
-    """Парсинг dohod.ru. Возвращает сумму дивидендов за 12м и DSI."""
-    url = f"https://www.dohod.ru/ik/analytics/dividend/{ticker.lower()}"
-    result = {"div_12m": 0.0, "dsi": 0.0}
+def fetch_dividends_moex(ticker: str) -> float:
+    url = ISS_DIVIDENDS.format(ticker=ticker)
     try:
         r = _session().get(url, timeout=10)
-        if r.status_code != 200: return result
+        block = r.json().get("dividends", {})
+        cols = block.get("columns", [])
+        data = block.get("data", [])
+        if not data or not cols: return 0.0
 
-        # 1. Парсим DSI из текста страницы
-        soup = BeautifulSoup(r.text, 'html.parser')
-        text = soup.get_text()
-        dsi_match = re.search(r'DSI[^0-9]*([0-9]+[.,][0-9]+)', text)
-        if dsi_match:
-            result["dsi"] = float(dsi_match.group(1).replace(',', '.'))
-
-        # 2. Ищем таблицу с дивидендами
-        tables = pd.read_html(r.text)
-        if not tables: return result
+        date_idx, val_idx = None, None
+        for i, c in enumerate(cols):
+            c_lower = c.lower()
+            if c_lower == "registryclosedate": date_idx = i
+            elif c_lower == "value": val_idx = i
+            
+        if date_idx is None or val_idx is None: return 0.0
 
         today = datetime.now().date()
         one_year_ago = today - timedelta(days=365)
         total_div = 0.0
+        
+        for row in data:
+            reg_date_str = row[date_idx]
+            val = row[val_idx]
+            if reg_date_str and val:
+                try:
+                    reg_date = datetime.strptime(str(reg_date_str)[:10], "%Y-%m-%d").date()
+                    if one_year_ago <= reg_date <= today:
+                        total_div += float(val)
+                except Exception: pass
+        return total_div
+    except Exception:
+        return 0.0
 
-        for df in tables:
-            cols_lower = [str(c).lower() for c in df.columns]
-            # Ищем таблицу, где есть дата и слово "дивиденд" или "выплата"
-            if any('дата' in c for c in cols_lower) and any('дивиденд' in c or 'выплата' in c or 'размер' in c for c in cols_lower):
-                
-                date_col, val_col = None, None
-                for i, c in enumerate(cols_lower):
-                    if 'дата' in c and date_col is None: date_col = i
-                    if ('дивиденд' in c or 'выплата' in c or 'размер' in c) and val_col is None: val_col = i
+@st.cache_data(ttl=86400, show_spinner=False)
+def fetch_dividends_dohod(ticker: str) -> dict:
+    """Парсинг dohod.ru с резервным переходом на MOEX при блокировке."""
+    url = f"https://www.dohod.ru/ik/analytics/dividend/{ticker.lower()}"
+    result = {"div_12m": 0.0, "dsi": 0.0, "source": "none"}
+    
+    # Попытка 1: Dohod.ru
+    try:
+        r = _session().get(url, timeout=10)
+        if r.status_code == 200:
+            soup = BeautifulSoup(r.text, 'html.parser')
+            text = soup.get_text()
+            dsi_match = re.search(r'DSI[^0-9]*([0-9]+[.,][0-9]+)', text)
+            if dsi_match:
+                result["dsi"] = float(dsi_match.group(1).replace(',', '.'))
 
-                if date_col is not None and val_col is not None:
-                    for _, row in df.iterrows():
-                        date_str = str(row.iloc[date_col])
-                        val_str = str(row.iloc[val_col]).replace(',', '.').replace(' ', '').replace('₽', '')
-                        
-                        try:
-                            # Ищем дату в формате DD.MM.YYYY
+            tables = pd.read_html(r.text)
+            today = datetime.now().date()
+            one_year_ago = today - timedelta(days=365)
+            total_div = 0.0
+
+            for df in tables:
+                cols_lower = [str(c).lower() for c in df.columns]
+                if any('дата' in c for c in cols_lower) and any('дивиденд' in c or 'выплата' in c for c in cols_lower):
+                    date_col = next((i for i, c in enumerate(cols_lower) if 'дата' in c), None)
+                    val_col = next((i for i, c in enumerate(cols_lower) if 'дивиденд' in c or 'выплата' in c), None)
+                    
+                    if date_col is not None and val_col is not None:
+                        for _, row in df.iterrows():
+                            date_str = str(row.iloc[date_col])
+                            val_str = str(row.iloc[val_col]).replace(',', '.').replace(' ', '').replace('₽', '')
+                            
                             date_match = re.search(r'(\d{2}\.\d{2}\.\d{4})', date_str)
                             if date_match:
-                                reg_date = datetime.strptime(date_match.group(1), "%d.%m.%Y").date()
-                                # Берем только прошедшие даты в пределах последнего года
-                                if one_year_ago <= reg_date <= today:
-                                    clean_val = re.sub(r'[^\d.]', '', val_str)
-                                    if clean_val:
-                                        total_div += float(clean_val)
-                        except Exception:
-                            pass
-                    
-                    if total_div > 0:
-                        break
-
-        result["div_12m"] = total_div
-        return result
+                                try:
+                                    reg_date = datetime.strptime(date_match.group(1), "%d.%m.%Y").date()
+                                    if one_year_ago <= reg_date <= today:
+                                        clean_val = re.sub(r'[^\d.]', '', val_str)
+                                        if clean_val: total_div += float(clean_val)
+                                except Exception: pass
+                        
+                        if total_div > 0:
+                            result["div_12m"] = total_div
+                            result["source"] = "dohod"
+                            return result
     except Exception:
-        return result
+        pass # Игнорируем ошибку блокировки и идем в MOEX
+
+    # Попытка 2: Резервный MOEX ISS
+    try:
+        moex_div = fetch_dividends_moex(ticker)
+        if moex_div > 0:
+            result["div_12m"] = moex_div
+            result["source"] = "moex"
+    except Exception:
+        pass
+
+    return result
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def fetch_dividends_smartlab(ticker: str) -> dict:
-    """Парсинг Smart-Lab для получения брутто/нетто дивидендов (для портфеля)."""
     url = f"https://smart-lab.ru/q/{ticker}/dividend/"
     result = {"div_gross": 0.0, "div_net": 0.0, "tax": 0.13}
     try:
         tables = pd.read_html(url, encoding='cp1251')
         if not tables: return result
-        # Заглушка: логика парсинга Smart-Lab для брутто/нетто
         return result
     except Exception:
         return result
