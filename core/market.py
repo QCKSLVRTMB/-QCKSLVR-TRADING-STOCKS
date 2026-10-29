@@ -208,3 +208,34 @@ def fetch_moex_candles(ticker: str, interval: int, days_back: int = 60, market: 
     if "Volume" not in df: df["Volume"] = 0
     df["Date"] = pd.to_datetime(df["Date"])
     return df.set_index("Date").sort_index().dropna(subset=["Open", "High", "Low", "Close"])[["Open", "High", "Low", "Close", "Volume"]]
+
+def parse_sources_excel(file) -> dict:
+    """Читает Excel-файл с листами W_Formations, Fundamentals, Portfolio."""
+    result = {"w_formations": {}, "fundamental_data": {}, "portfolio_data": []}
+    try:
+        xls = pd.ExcelFile(file)
+        sheets = xls.sheet_names
+        
+        if 'W_Formations' in sheets:
+            df_w = pd.read_excel(xls, sheet_name='W_Formations')
+            if len(df_w.columns) >= 2:
+                result["w_formations"] = dict(zip(df_w.iloc[:, 0].astype(str).str.upper(), df_w.iloc[:, 1]))
+        
+        if 'Fundamentals' in sheets:
+            df_fund = pd.read_excel(xls, sheet_name='Fundamentals')
+            if len(df_fund.columns) >= 3:
+                new_fund = {}
+                for _, row in df_fund.iterrows():
+                    ticker = str(row.iloc[0]).strip().upper()
+                    ars = int(row.iloc[1]) if pd.notna(row.iloc[1]) else 0
+                    dsi = float(row.iloc[2]) if pd.notna(row.iloc[2]) else 0.0
+                    new_fund[ticker] = {"ars_group": ars, "dsi": dsi}
+                result["fundamental_data"] = new_fund
+                
+        if 'Portfolio' in sheets:
+            df_port = pd.read_excel(xls, sheet_name='Portfolio')
+            result["portfolio_data"] = df_port.to_dict(orient="records")
+            
+    except Exception as e:
+        st.error(f"Ошибка чтения Excel: {e}")
+    return result
