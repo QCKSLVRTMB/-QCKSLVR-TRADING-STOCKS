@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from core.market import fetch_moex_stocks, fetch_moex_indices, fetch_extreme_close, fetch_all_closes_on_date
+from core.market import fetch_moex_stocks, fetch_moex_indices, fetch_extreme_close
 from core.ranking import calc_ranking, get_asset_color
 from core import state
 
@@ -19,8 +19,6 @@ def render_rating():
     extreme_date = state.g("extreme_date")
     
     with st.spinner("Расчет рейтинга..."):
-        closes_on_extreme = fetch_all_closes_on_date(extreme_date)
-        
         imoex_ext, _ = fetch_extreme_close("IMOEX", extreme_date, market="index")
         imoex_row = df_indices[df_indices['SECID']=='IMOEX']
         imoex_curr = imoex_row['CURRENTVALUE'].values[0] if not imoex_row.empty else 0.0
@@ -28,7 +26,8 @@ def render_rating():
         w_forms = state.g("w_formations")
         cb_rate = state.g("cb_rate")
         
-        df = calc_ranking(df_stocks, w_forms, cb_rate, closes_on_extreme, imoex_ext, imoex_curr)
+        # Передаем extreme_date в calc_ranking
+        df = calc_ranking(df_stocks, w_forms, cb_rate, extreme_date, imoex_ext, imoex_curr)
     
     df = df.sort_values("total_score", ascending=False).reset_index(drop=True)
     df["№"] = df.index + 1
@@ -39,34 +38,41 @@ def render_rating():
         "Название": df["SHORTNAME"],
         "Тикер": df["SECID"],
         "Вид актива": df.apply(lambda r: get_asset_color(r["div_yield"], cb_rate, r["rel_strength"]), axis=1),
-        "Формация": df["w_form"],
+        "W-формация": df["w_form"],
+        "Арсагера": df["ars_group"],
         "В составе индекса": df["in_index_str"],
         "Сила актива": df["rel_strength"],
-        "Див. доходность": df["div_yield"],
+        "Дивидендная доходность (по рынку)": df["div_yield"],
         "DSI": df["dsi"],
-        "Листинг": df["LISTLEVEL"],
+        "Тип листинга": df["LISTLEVEL"],
         "Сумма баллов": df["total_score"],
-        "Рек. цена": df["recommended_price"]
+        "Рекомендуемая цена": df["recommended_price"]
     })
 
     def apply_styles(row):
         styles = [""] * len(row)
-        w = row["Формация"]
-        if w == "вверх": styles[4] = "background-color: #4CAF50; color: #4CAF50;"
-        elif w == "рейндж": styles[4] = "background-color: #2196F3; color: #2196F3;"
-        elif w == "вниз": styles[4] = "background-color: #F44336; color: #F44336;"
         
-        if row["В составе индекса"] == "да": styles[5] = "background-color: #4CAF50; color: white;"
-        else: styles[5] = "background-color: #F44336; color: white;"
+        # W-формация
+        w = row["W-формация"]
+        if w == "вверх": styles[4] = "background-color: #4CAF50; color: white;"
+        elif w == "рейндж": styles[4] = "background-color: #2196F3; color: white;"
+        elif w == "вниз": styles[4] = "background-color: #F44336; color: white;"
         
-        if row["Сила актива"] > 0: styles[6] = "background-color: #4CAF50; color: white;"
+        # В составе индекса
+        if row["В составе индекса"] == "да": styles[6] = "background-color: #4CAF50; color: white;"
         else: styles[6] = "background-color: #F44336; color: white;"
         
+        # Сила актива
+        if row["Сила актива"] > 0: styles[7] = "background-color: #4CAF50; color: white;"
+        else: styles[7] = "background-color: #F44336; color: white;"
+        
+        # Вид актива
         color = row["Вид актива"]
         if color == "green": styles[3] = "background-color: #4CAF50; color: #4CAF50;"
         elif color == "yellow": styles[3] = "background-color: #FFEB3B; color: #FFEB3B;"
         elif color == "orange": styles[3] = "background-color: #FF9800; color: #FF9800;"
         elif color == "red": styles[3] = "background-color: #F44336; color: #F44336;"
+        
         return styles
 
     styled_df = (
@@ -74,28 +80,14 @@ def render_rating():
         .apply(apply_styles, axis=1)
         .format({
             "Вид актива": lambda x: "",
-            "Формация": lambda x: "",
             "Сила актива": "{:+.2f}%",
-            "Див. доходность": "{:.2f}%",
+            "Дивидендная доходность (по рынку)": "{:.2f}%",
             "DSI": "{:.2f}",
-            "Листинг": "{:.0f}",
+            "Тип листинга": "{:.0f}",
             "Сумма баллов": "{:.0f}",
-            "Рек. цена": "{:.2f} ₽",
+            "Рекомендуемая цена": "{:.2f} ₽",
             "№": "{:.0f}"
         })
     )
 
     st.dataframe(styled_df, use_container_width=True, hide_index=True)
-    
-    # Отладочный блок
-    with st.expander("🛠 Отладка расчетов силы актива (Нажмите для проверки)"):
-        st.write(f"**IMOEX на экстремум ({extreme_date}):** {imoex_ext:.2f}")
-        st.write(f"**Текущий IMOEX:** {imoex_curr:.2f}")
-        st.write(f"**Изменение IMOEX:** {df['imoex_chg'].iloc[0]:+.2f}%")
-        st.dataframe(
-            df[["SECID", "price_curr", "price_ext", "stock_chg", "imoex_chg", "rel_strength"]].rename(columns={
-                "SECID": "Тикер", "price_curr": "Цена сейчас", "price_ext": "Цена на экстремум",
-                "stock_chg": "Изм. акции %", "imoex_chg": "Изм. индекса %", "rel_strength": "Сила актива %"
-            }),
-            use_container_width=True, hide_index=True
-        )
