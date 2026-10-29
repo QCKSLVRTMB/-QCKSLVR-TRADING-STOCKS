@@ -4,7 +4,7 @@ from datetime import datetime
 import pandas as pd
 from core import state, storage
 from core.config import APP_TITLE
-from core.market import fetch_moex_stocks, parse_sources_excel
+from core.market import fetch_moex_stocks
 from tabs.main_table import render_main_tab
 from tabs.indices import render_indices
 from tabs.rating import render_rating
@@ -39,34 +39,67 @@ with st.sidebar:
     st.divider()
     st.header("Импорт / Экспорт")
     
-    # Единый импорт Excel
-    excel_file = st.file_uploader("Импорт данных (Excel)", type=["xlsx", "xls"])
-    if excel_file:
-        parsed = parse_sources_excel(excel_file)
-        if parsed["w_formations"]: state.set_global("w_formations", parsed["w_formations"])
-        if parsed["fundamental_data"]: state.set_global("fundamental_data", parsed["fundamental_data"])
-        if parsed["portfolio_data"]: state.set_global("portfolio_data", parsed["portfolio_data"])
-        if any(parsed.values()):
-            st.success("Данные из Excel загружены!")
+    # 1. Загрузка W-формаций
+    w_file = st.file_uploader("1. W-формации (Excel)", type=["xlsx", "xls"])
+    if w_file:
+        try:
+            df_w = pd.read_excel(w_file)
+            if len(df_w.columns) >= 2:
+                new_w = dict(zip(df_w.iloc[:, 0].astype(str).str.upper(), df_w.iloc[:, 1]))
+                state.set_global("w_formations", new_w)
+                st.success("W-формации обновлены!")
+                state.autosave()
+                st.rerun()
+        except Exception as e:
+            st.error(f"Ошибка W: {e}")
+
+    # 2. Загрузка DSI и Арсагеры
+    fund_file = st.file_uploader("2. DSI и Арсагера (Excel)", type=["xlsx", "xls"])
+    if fund_file:
+        try:
+            df_fund = pd.read_excel(fund_file)
+            if len(df_fund.columns) >= 3:
+                new_fund = {}
+                for _, row in df_fund.iterrows():
+                    ticker = str(row.iloc[0]).strip().upper()
+                    ars = int(row.iloc[1]) if pd.notna(row.iloc[1]) else 0
+                    dsi = float(row.iloc[2]) if pd.notna(row.iloc[2]) else 0.0
+                    new_fund[ticker] = {"ars_group": ars, "dsi": dsi}
+                state.set_global("fundamental_data", new_fund)
+                st.success("DSI и Арсагера обновлены!")
+                state.autosave()
+                st.rerun()
+        except Exception as e:
+            st.error(f"Ошибка DSI: {e}")
+
+    # 3. Загрузка Портфеля
+    port_file = st.file_uploader("3. Портфель (Excel)", type=["xlsx", "xls"])
+    if port_file:
+        try:
+            df_port = pd.read_excel(port_file)
+            state.set_global("portfolio_data", df_port.to_dict(orient="records"))
+            st.success("Портфель загружен!")
             state.autosave()
             st.rerun()
+        except Exception as e:
+            st.error(f"Ошибка портфеля: {e}")
 
     st.divider()
     
     # Экспорт JSON
-    if st.button("Подготовить экспорт"):
+    if st.button("Подготовить экспорт JSON", use_container_width=True):
         st.session_state["_export_blob"] = storage.dumps(S)
     blob = st.session_state.get("_export_blob")
     if blob:
-        st.download_button("Скачать JSON", data=blob, file_name=f"backup_{datetime.now().strftime('%d_%m_%y')}.json", mime="application/json")
+        st.download_button("Скачать JSON", data=blob, file_name=f"backup_{datetime.now().strftime('%d_%m_%y')}.json", mime="application/json", use_container_width=True)
 
     # Импорт JSON
-    json_file = st.file_uploader("Импорт JSON (полный бэкап)", type=["json"])
-    if json_file and st.button("Применить бэкап"):
+    json_file = st.file_uploader("Импорт JSON (бэкап)", type=["json"])
+    if json_file and st.button("Применить бэкап", use_container_width=True):
         parsed_json = storage.loads(json_file.getvalue().decode("utf-8"))
         if parsed_json:
             state.replace_state(parsed_json)
-            st.success("Загружено!"); st.rerun()
+            st.success("Данные восстановлены!"); st.rerun()
 
 df_stocks = fetch_moex_stocks()
 
