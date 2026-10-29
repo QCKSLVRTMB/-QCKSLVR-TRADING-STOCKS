@@ -10,14 +10,24 @@ def render_main_tab(df_stocks: pd.DataFrame, deposit: float):
         st.warning("Нет данных с MOEX ISS.")
         return
 
-    # === 1. ВЫБОР ИНСТРУМЕНТОВ ===
+    # === 1. БЫСТРОЕ ДОБАВЛЕНИЕ ТИКЕРОВ ===
+    st.markdown("#### Быстрое добавление тикеров")
+    c1, c2 = st.columns([4, 1])
+    with c1:
+        bulk_input = st.text_input("Введите тикеры через запятую или пробел (например: SBER, GAZP, LKOH)", label_visibility="collapsed", placeholder="SBER, GAZP, LKOH...")
+    with c2:
+        if st.button("Добавить", use_container_width=True) and bulk_input:
+            new_tickers = [t.strip().upper() for t in bulk_input.replace(",", " ").split() if t.strip()]
+            current = set(state.g("active_tickers", []))
+            current.update(new_tickers)
+            state.set_global("active_tickers", list(current))
+            state.autosave()
+            st.rerun()
+
+    # === 2. ВЫБОР ИНСТРУМЕНТОВ ===
     st.markdown("#### Выбор инструментов (Watchlist)")
-    st.info("Отметьте галочками акции, чтобы добавить их в калькулятор и рейтинг.")
     
-    # Готовим таблицу для отображения
     df_display = df_stocks[["SECID", "SHORTNAME", "PRICE", "LASTCHANGEPRCNT", "LOT_VALUE", "LISTLEVEL"]].copy()
-    
-    # Добавляем колонку выбора (галочки) на основе текущего стейта
     active = state.g("active_tickers", [])
     df_display.insert(0, "Выбрать", df_display["SECID"].isin(active))
     
@@ -38,14 +48,13 @@ def render_main_tab(df_stocks: pd.DataFrame, deposit: float):
         disabled=["SECID", "SHORTNAME", "PRICE", "LASTCHANGEPRCNT", "LOT_VALUE", "LISTLEVEL"]
     )
 
-    # Синхронизируем выбор с глобальным состоянием
     selected = edited_df[edited_df["Выбрать"]]["SECID"].tolist()
     if selected != active:
         state.set_global("active_tickers", selected)
         state.autosave()
         st.rerun()
 
-    # === 2. НАСТРОЙКА ТРЕНДОВ ===
+    # === 3. НАСТРОЙКА ТРЕНДОВ ===
     st.markdown("#### Настройка параметров рынка")
     if not active:
         st.caption("Выберите хотя бы одну акцию выше.")
@@ -74,11 +83,8 @@ def render_main_tab(df_stocks: pd.DataFrame, deposit: float):
         disabled=["Тикер"]
     )
     
-    # Сохраняем изменения трендов
     for _, r in t_edited.iterrows():
         state.ticker(r["Тикер"])["market"].update({
-            "trend": r["Тренд"], 
-            "wave": r["Волна"], 
-            "tendency": r["Тенденция"]
+            "trend": r["Тренд"], "wave": r["Волна"], "tendency": r["Тенденция"]
         })
     state.autosave()
