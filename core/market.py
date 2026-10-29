@@ -208,6 +208,19 @@ def fetch_dividends_dohod(ticker: str) -> dict:
 
     return result
 
+@st.cache_data(ttl=86400, show_spinner=False)
+def fetch_dividends_smartlab(ticker: str) -> dict:
+    """Парсинг Smart-Lab для получения брутто/нетто дивидендов (для портфеля)."""
+    url = f"https://smart-lab.ru/q/{ticker}/dividend/"
+    result = {"div_gross": 0.0, "div_net": 0.0, "tax": 0.13}
+    try:
+        tables = pd.read_html(url, encoding='cp1251')
+        if not tables: return result
+        # Логика парсинга брутто/нетто будет добавлена позже
+        return result
+    except Exception:
+        return result
+
 @st.cache_data(ttl=180, show_spinner=False)
 def fetch_moex_candles(ticker: str, interval: int, days_back: int = 60, market: str = "shares") -> pd.DataFrame:
     frm = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
