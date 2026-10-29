@@ -40,7 +40,6 @@ def render_rating():
     df = df.sort_values("total_score", ascending=False).reset_index(drop=True)
     df["№"] = df.index + 1
 
-    # Безопасный apply для цветов
     def safe_color(row):
         return get_asset_color(row.get("div_yield", 0.0), cb_rate, row.get("rel_strength", 0.0))
 
@@ -95,4 +94,4 @@ def render_rating():
         })
     )
 
-    st.dataframe(styled_df, use_container_width=True, hide_index=True)
+    st.dataframe(styled_df, width="stretch", hide_index=True)
