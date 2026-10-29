@@ -30,6 +30,12 @@ def fetch_moex_stocks() -> pd.DataFrame:
         st.warning(f"ISS недоступен: {e}")
         return pd.DataFrame()
 
+    # Защита от отсутствия колонок
+    for col in ["LOTSIZE", "MINSTEP", "PREVPRICE", "LISTLEVEL", "ISSUESIZE", "DECIMALS", "SECID", "SHORTNAME"]:
+        if col not in sec.columns: sec[col] = 0 if col != "SECID" and col != "SHORTNAME" else ""
+    for col in ["LAST", "VALTODAY", "LASTCHANGEPRCNT", "NUMTRADES", "SECID"]:
+        if col not in mkt.columns: mkt[col] = 0 if col != "SECID" else ""
+
     df = sec[["SECID", "SHORTNAME", "LOTSIZE", "MINSTEP", "PREVPRICE", "LISTLEVEL", "ISSUESIZE", "DECIMALS"]].merge(
         mkt[["SECID", "LAST", "VALTODAY", "LASTCHANGEPRCNT", "NUMTRADES"]], on="SECID", how="left")
     
@@ -46,12 +52,19 @@ def fetch_moex_indices() -> pd.DataFrame:
     try:
         r = _session().get(ISS_INDICES, timeout=30)
         js = r.json()
-        sec = pd.DataFrame(js["securities"]["data"], columns=js["securities"]["columns"])
-        mkt = pd.DataFrame(js["marketdata"]["data"], columns=js["marketdata"]["columns"])
+        sec = pd.DataFrame(js.get("securities", {}).get("data", []), columns=js.get("securities", {}).get("columns", []))
+        mkt = pd.DataFrame(js.get("marketdata", {}).get("data", []), columns=js.get("marketdata", {}).get("columns", []))
     except Exception:
         return pd.DataFrame()
 
     valid_tickers = ["IMOEX"] + list(INDEX_META.keys())
+    
+    # Защита: если блок marketdata пустой или нет нужных колонок
+    if "SECID" not in mkt.columns: mkt["SECID"] = ""
+    if "CURRENTVALUE" not in mkt.columns: mkt["CURRENTVALUE"] = 0.0
+    if "LASTCHANGEPRCNT" not in mkt.columns: mkt["LASTCHANGEPRCNT"] = 0.0
+    if "SECID" not in sec.columns: return pd.DataFrame()
+
     df = sec[sec["SECID"].isin(valid_tickers)][["SECID", "SHORTNAME"]].merge(
         mkt[["SECID", "CURRENTVALUE", "LASTCHANGEPRCNT"]], on="SECID", how="left")
     
@@ -77,7 +90,7 @@ def fetch_extreme_close(index_ticker: str, date_str: str) -> tuple[float, str]:
     try:
         r = _session().get(url, params={"from": frm, "till": till, "iss.meta": "off"}, timeout=10)
         hist = pd.DataFrame(r.json()["history"]["data"], columns=r.json()["history"]["columns"])
-        if hist.empty: return 0.0, "-"
+        if hist.empty or "CLOSE" not in hist.columns: return 0.0, "-"
         last_row = hist.sort_values("TRADEDATE").iloc[-1]
         return float(last_row["CLOSE"]), str(last_row["TRADEDATE"])
     except Exception:
@@ -102,18 +115,4 @@ def fetch_moex_candles(ticker: str, interval: int, days_back: int = 60, market: 
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_dividends_smartlab(ticker: str) -> dict:
-    """Парсинг Smart-Lab с фильтрацией прогнозов"""
-    url = f"https://smart-lab.ru/q/{ticker}/dividend/"
-    try:
-        tables = pd.read_html(url, encoding='cp1251')
-        if not tables: return {"div_12m": 0.0, "dsi": 0.5}
-        
-        df = tables[0]
-        # Упрощенный алгоритм (зависит от текущей верстки Smart-Lab)
-        # Если есть колонка с датой реестра, отбрасываем будущие
-        today = datetime.now()
-        
-        # Заглушка для корректной работы интерфейса (при реальном парсинге заменить)
-        return {"div_12m": 0.0, "dsi": 0.5}
-    except Exception:
-        return {"div_12m": 0.0, "dsi": 0.0}
+    return {"div_12m": 0.0, "dsi": 0.5} # Временная заглушка
