@@ -2,6 +2,7 @@ from __future__ import annotations
 import pandas as pd
 import numpy as np
 import streamlit as st
+from datetime import datetime
 
 from core import charts, state
 from core.calc import get_instrument, calculate_volume_profile, get_volume_colors
@@ -108,10 +109,10 @@ def render_trade_planner(ticker: str, df_stocks: pd.DataFrame):
     st.markdown("#### Графики рынка")
     c_tog1, c_tog2 = st.columns(2)
     with c_tog1:
-        show_clusters = st.toggle("Кластеры объемов (M10)", value=tdata.get("show_clusters", False), key=f"clu_{ticker}")
+        show_clusters = st.toggle("Кластеры объемов (H1)", value=tdata.get("show_clusters", False), key=f"clu_{ticker}")
         tdata["show_clusters"] = show_clusters
     with c_tog2:
-        show_custom_clusters = st.toggle("Диапазон кластеров (D1)", value=tdata.get("show_custom_clusters", False), key=f"clu_custom_{ticker}")
+        show_custom_clusters = st.toggle("Диапазон кластеров (W)", value=tdata.get("show_custom_clusters", False), key=f"clu_custom_{ticker}")
         tdata["show_custom_clusters"] = show_custom_clusters
 
     clusters_data = []
@@ -121,45 +122,52 @@ def render_trade_planner(ticker: str, df_stocks: pd.DataFrame):
         overlap_pct = st.slider("Порог отсечения кластеров", 10, 100, tdata.get("cluster_threshold", 50), 5, key=f"clu_bins_{ticker}")
         tdata["cluster_threshold"] = int(overlap_pct)
         
-        # 1. Автоматические кластеры от канала
+        # 1. Автоматические кластеры от канала на W
         if show_clusters:
-            d1_pts = tdata["charts"]["D1"].get("channel", [])
-            if len(d1_pts) == 3:
-                cluster_start_time = pd.to_datetime(d1_pts[2][0])
-                df_m10 = fetch_moex_candles(ticker, interval=10, days_back=60)
-                if not df_m10.empty:
-                    # Рассчитываем цвета на полном df_m10 для корректного скользящего среднего
-                    all_colors = get_volume_colors(df_m10, "M10")
-                    mask = df_m10.index >= cluster_start_time
-                    df_slice = df_m10[mask]
+            w_pts = tdata["charts"]["W"].get("channel", [])
+            if len(w_pts) == 3:
+                cluster_start_time = pd.to_datetime(w_pts[2][0])
+                days_needed = min((datetime.now() - cluster_start_time).days + 10, 730)
+                df_h1 = fetch_moex_candles(ticker, interval=60, days_back=days_needed)
+                
+                if not df_h1.empty:
+                    all_colors = get_volume_colors(df_h1, "H1")
+                    mask = df_h1.index >= cluster_start_time
+                    df_slice = df_h1[mask]
                     colors_slice = np.array(all_colors)[mask]
                     
                     if not df_slice.empty:
-                        clusters_data = calculate_volume_profile(df_slice, tf_name="M10", threshold_pct=overlap_pct, colors=colors_slice)
+                        clusters_data = calculate_volume_profile(df_slice, tf_name="H1", threshold_pct=overlap_pct, colors=colors_slice)
                         if not clusters_data:
-                            st.caption("В зоне канала нет аномальных объёмов M10.")
+                            st.caption("В зоне канала нет аномальных объёмов H1.")
+                else:
+                    st.caption("Нет данных H1 за выбранный период.")
 
-        # 2. Ручные кластеры (диапазон)
+        # 2. Ручные кластеры (диапазон на W)
         if show_custom_clusters:
-            cr_pts = tdata["charts"]["D1"].get("cluster_range", [])
+            cr_pts = tdata["charts"]["W"].get("cluster_range", [])
             if len(cr_pts) == 2:
                 t1 = pd.to_datetime(cr_pts[0][0])
                 t2 = pd.to_datetime(cr_pts[1][0])
                 t_start, t_end = min(t1, t2), max(t1, t2)
                 
-                df_m10 = fetch_moex_candles(ticker, interval=10, days_back=730)
-                if not df_m10.empty:
-                    all_colors = get_volume_colors(df_m10, "M10")
-                    mask = (df_m10.index >= t_start) & (df_m10.index <= t_end)
-                    df_slice = df_m10[mask]
+                days_needed = min((datetime.now() - t_start).days + 10, 730)
+                df_h1 = fetch_moex_candles(ticker, interval=60, days_back=days_needed)
+                
+                if not df_h1.empty:
+                    all_colors = get_volume_colors(df_h1, "H1")
+                    mask = (df_h1.index >= t_start) & (df_h1.index <= t_end)
+                    df_slice = df_h1[mask]
                     colors_slice = np.array(all_colors)[mask]
                     
                     if not df_slice.empty:
-                        custom_clusters_data = calculate_volume_profile(df_slice, tf_name="M10", threshold_pct=overlap_pct, colors=colors_slice)
+                        custom_clusters_data = calculate_volume_profile(df_slice, tf_name="H1", threshold_pct=overlap_pct, colors=colors_slice)
                         if not custom_clusters_data:
-                            st.caption("В выбранном диапазоне нет аномальных объёмов M10.")
+                            st.caption("В выбранном диапазоне нет аномальных объёмов H1.")
                     else:
-                        st.caption("Нет M10 данных в выбранном диапазоне дат.")
+                        st.caption("Нет H1 данных в выбранном диапазоне дат.")
+                else:
+                    st.caption("Не удалось загрузить данные H1.")
 
     chart_tabs = st.tabs([cfg["label"] for cfg in INTERVALS.values()])
     for tab, (tf_name, cfg) in zip(chart_tabs, INTERVALS.items()):
@@ -171,10 +179,10 @@ def render_trade_planner(ticker: str, df_stocks: pd.DataFrame):
 def _render_tf_chart(ticker, tf_name, cfg, inst, tdata, mobile, buy_level, sell_level, clusters_data, custom_clusters_data):
     chart_data = tdata["charts"][tf_name]
 
-    if tf_name == "W": available_tools = ["channel", "fib_d1"]
-    elif tf_name == "D1": available_tools = ["channel", "fib_d1", "cluster_range"]
-    elif tf_name == "H1": available_tools = ["zigzag", "fib_h1"]
-    else: available_tools = ["zigzag"]
+    # Инструменты для разных ТФ
+    if tf_name == "W": available_tools = ["channel", "fib_w", "cluster_range"]
+    elif tf_name == "D1": available_tools = ["zigzag", "fib_d1"]
+    else: available_tools = ["zigzag", "fib_h1"]
 
     tool_labels = {"cluster_range": "Диапазон кластеров"}
 
@@ -190,10 +198,10 @@ def _render_tf_chart(ticker, tf_name, cfg, inst, tdata, mobile, buy_level, sell_
         show_info = cc2.toggle("Информация", value=chart_data.get("show_info", True), key=f"info_{ticker}_{tf_name}")
         chart_data["show_info"] = bool(show_info)
 
-    if tf_name == "W": target_tool = tool if tool == "channel" else "fib"
-    elif tf_name == "D1": target_tool = tool if tool in ["channel", "cluster_range"] else "fib"
-    elif tf_name == "H1": target_tool = "zigzag" if tool == "zigzag" else "fib"
-    else: target_tool = "zigzag"
+    # Маппинг инструментов к целевым ключам
+    if tf_name == "W": target_tool = tool if tool in ["channel", "cluster_range"] else "fib"
+    elif tf_name == "D1": target_tool = "zigzag" if tool == "zigzag" else "fib"
+    else: target_tool = "zigzag" if tool == "zigzag" else "fib"
 
     if target_tool not in chart_data: chart_data[target_tool] = []
 
@@ -208,13 +216,14 @@ def _render_tf_chart(ticker, tf_name, cfg, inst, tdata, mobile, buy_level, sell_
         st.warning("Нет данных MOEX.")
         return
 
-    d1_pts = tdata["charts"]["D1"].get("channel", [])
-    h1_zig = tdata["charts"]["H1"].get("zigzag", [])
+    # Зум на основе старших ТФ
+    w_ch = tdata["charts"]["W"].get("channel", [])
+    d1_zig = tdata["charts"]["D1"].get("zigzag", [])
     zoom_start = None
-    if tf_name == "H1" and len(d1_pts) == 3: zoom_start = d1_pts[2][0]
-    elif tf_name == "M10" and len(h1_zig) >= 4: zoom_start = h1_zig[-4][0]
+    if tf_name == "D1" and len(w_ch) == 3: zoom_start = w_ch[2][0]
+    elif tf_name == "H1" and len(d1_zig) >= 4: zoom_start = d1_zig[-4][0]
 
-    default_bars = 150
+    default_bars = 200
     if zoom_start:
         try:
             z_time = pd.to_datetime(zoom_start)
@@ -234,7 +243,7 @@ def _render_tf_chart(ticker, tf_name, cfg, inst, tdata, mobile, buy_level, sell_
         y = float(inst.round_price(y))
         bar = view.iloc[view.index.get_indexer([pd.to_datetime(x)], method='nearest')[0]]
         new_pts = pts.copy()
-        max_pts = 3 if tool == "channel" else (2 if tool in ["fib", "cluster_range"] else None)
+        max_pts = 3 if tool == "channel" else (2 if tool in ["fib_w", "fib_d1", "fib_h1", "cluster_range"] else None)
 
         if max_pts is None or len(new_pts) < max_pts:
             if tool == "channel":
@@ -287,32 +296,27 @@ def _render_tf_chart(ticker, tf_name, cfg, inst, tdata, mobile, buy_level, sell_
                 state.autosave(force=True)
                 st.rerun()
 
+    # Сборка данных для отрисовки (Сквозная видимость)
+    w_ch_s, w_fib_s = tdata["charts"]["W"].get("channel", []), tdata["charts"]["W"].get("fib", [])
+    w_cr_s = tdata["charts"]["W"].get("cluster_range", [])
+    d1_zig_s, d1_fib_s = tdata["charts"]["D1"].get("zigzag", []), tdata["charts"]["D1"].get("fib", [])
+    h1_zig_s, h1_fib_s = tdata["charts"]["H1"].get("zigzag", []), tdata["charts"]["H1"].get("fib", [])
+
+    # Снапинг для текущего ТФ
     if tf_name == "W":
-        w_ch_s, w_fib_s = snap_points(tdata["charts"]["W"]["channel"], view), snap_points(tdata["charts"]["W"]["fib"], view)
-        d1_ch_s, d1_fib_s, d1_cr_s, h1_zig_s, h1_fib_s, m10_zig_s = [], [], [], [], [], []
+        w_ch_s = snap_points(w_ch_s, view)
+        w_fib_s = snap_points(w_fib_s, view)
+        w_cr_s = snap_points(w_cr_s, view)
     elif tf_name == "D1":
-        w_ch_s, w_fib_s = tdata["charts"]["W"]["channel"], tdata["charts"]["W"]["fib"]
-        d1_ch_s = snap_points(tdata["charts"]["D1"]["channel"], view)
-        d1_fib_s = snap_points(tdata["charts"]["D1"]["fib"], view)
-        d1_cr_s = snap_points(tdata["charts"]["D1"].get("cluster_range", []), view)
-        h1_zig_s, h1_fib_s, m10_zig_s = tdata["charts"]["H1"]["zigzag"], tdata["charts"]["H1"]["fib"], tdata["charts"]["M10"]["zigzag"]
+        d1_zig_s = snap_points(d1_zig_s, view)
+        d1_fib_s = snap_points(d1_fib_s, view)
     elif tf_name == "H1":
-        w_ch_s, w_fib_s = tdata["charts"]["W"]["channel"], tdata["charts"]["W"]["fib"]
-        d1_ch_s, d1_fib_s = tdata["charts"]["D1"]["channel"], tdata["charts"]["D1"]["fib"]
-        d1_cr_s = tdata["charts"]["D1"].get("cluster_range", [])
-        h1_zig_s = snap_points(tdata["charts"]["H1"]["zigzag"], view)
-        h1_fib_s = snap_points(tdata["charts"]["H1"]["fib"], view)
-        m10_zig_s = tdata["charts"]["M10"]["zigzag"]
-    else: # M10
-        w_ch_s, w_fib_s = tdata["charts"]["W"]["channel"], tdata["charts"]["W"]["fib"]
-        d1_ch_s, d1_fib_s = tdata["charts"]["D1"]["channel"], tdata["charts"]["D1"]["fib"]
-        d1_cr_s = tdata["charts"]["D1"].get("cluster_range", [])
-        h1_zig_s, h1_fib_s = tdata["charts"]["H1"]["zigzag"], tdata["charts"]["H1"]["fib"]
-        m10_zig_s = snap_points(tdata["charts"]["M10"]["zigzag"], view)
+        h1_zig_s = snap_points(h1_zig_s, view)
+        h1_fib_s = snap_points(h1_fib_s, view)
 
     fig = charts.build_figure(view, tf_name=tf_name, title=f"{ticker} — {tf_name}", decimals=inst.decimals, mobile=mobile, show_info=show_info)
 
-    time_buffer = pd.Timedelta(days=10) if tf_name in ["D1", "W"] else (pd.Timedelta(hours=12) if tf_name == "H1" else pd.Timedelta(hours=2))
+    time_buffer = pd.Timedelta(days=10) if tf_name in ["D1", "W"] else pd.Timedelta(hours=12)
     x_left = view.index[0]
     x_right = view.index[-1] + time_buffer
 
@@ -320,14 +324,18 @@ def _render_tf_chart(ticker, tf_name, cfg, inst, tdata, mobile, buy_level, sell_
     if custom_clusters_data: charts.draw_clusters(fig, custom_clusters_data, x_left, x_right, color="blue")
 
     if show_tools:
+        # Отрисовка W (Фиолетовый)
         if w_ch_s: charts.draw_channel(fig, w_ch_s, x_right, color="purple")
         if w_fib_s: charts.draw_fib(fig, w_fib_s, x_left, x_right, "purple", "0.5 W")
-        if d1_ch_s: charts.draw_channel(fig, d1_ch_s, x_right, color="blue")
+        if w_cr_s and len(w_cr_s) == 2: charts.draw_zigzag(fig, w_cr_s, "#2196F3", "Диапазон W")
+        
+        # Отрисовка D1 (Синий)
+        if d1_zig_s: charts.draw_zigzag(fig, d1_zig_s, "#26a69a", "Тенденция (D1)")
         if d1_fib_s: charts.draw_fib(fig, d1_fib_s, x_left, x_right, "blue", "0.5 D1")
-        if h1_fib_s: charts.draw_fib(fig, h1_fib_s, x_left, x_right, "green", "0.5 H1")
-        if d1_cr_s and len(d1_cr_s) == 2: charts.draw_zigzag(fig, d1_cr_s, "#2196F3", "Диапазон кластеров")
-        if h1_zig_s: charts.draw_zigzag(fig, h1_zig_s, "#26a69a", "Тенденция (H1)")
-        if m10_zig_s and tf_name in ["H1", "M10"]: charts.draw_zigzag(fig, m10_zig_s, "#ef5350", "Зигзаг (M10)")
+        
+        # Отрисовка H1 (Зеленый)
+        if h1_zig_s and tf_name in ["D1", "H1"]: charts.draw_zigzag(fig, h1_zig_s, "#ef5350", "Зигзаг (H1)")
+        if h1_fib_s and tf_name == "H1": charts.draw_fib(fig, h1_fib_s, x_left, x_right, "green", "0.5 H1")
 
     if show_position:
         charts.draw_trade_visuals(fig, buy_level, sell_level, x_left, x_right, inst.decimals)
