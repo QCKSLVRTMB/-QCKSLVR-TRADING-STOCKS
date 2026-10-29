@@ -6,6 +6,7 @@ import streamlit as st
 from requests.adapters import HTTPAdapter, Retry
 import time
 from bs4 import BeautifulSoup
+import re
 from core.config import INDEX_META
 
 ISS_SHARES = "https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/securities.json?iss.meta=off&iss.only=securities,marketdata&limit=1000"
@@ -16,7 +17,7 @@ ISS_HISTORY = "https://iss.moex.com/iss/history/engines/stock/markets/{market}/s
 @st.cache_resource(show_spinner=False)
 def _session() -> requests.Session:
     s = requests.Session()
-    s.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
+    s.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"})
     s.mount("https://", HTTPAdapter(max_retries=Retry(total=3, backoff_factor=0.5)))
     return s
 
@@ -112,29 +113,56 @@ def fetch_dividends_dohod(ticker: str) -> dict:
     try:
         r = _session().get(url, timeout=10)
         if r.status_code != 200: return result
-        
-        soup = BeautifulSoup(r.text, 'html.parser')
-        
-        # Поиск DSI (обычно текст вида "DSI: 0.86")
-        text = soup.get_text()
-        import re
-        dsi_match = re.search(r'DSI[:\s]+([0-9.]+)', text)
-        if dsi_match:
-            result["dsi"] = float(dsi_match.group(1))
 
-        # Поиск таблицы дивидендов (упрощенно)
+        # 1. Парсим DSI из текста страницы
+        soup = BeautifulSoup(r.text, 'html.parser')
+        text = soup.get_text()
+        dsi_match = re.search(r'DSI[^0-9]*([0-9]+[.,][0-9]+)', text)
+        if dsi_match:
+            result["dsi"] = float(dsi_match.group(1).replace(',', '.'))
+
+        # 2. Ищем таблицу с дивидендами
         tables = pd.read_html(r.text)
         if not tables: return result
-        
-        # Ищем таблицу с нужными колонками (здесь нужна будет адаптация под реальную верстку)
+
+        today = datetime.now().date()
+        one_year_ago = today - timedelta(days=365)
+        total_div = 0.0
+
         for df in tables:
-            if "Выплата на акцию" in df.columns or "Дивиденд" in str(df.columns):
-                # Упрощенная логика, так как верстка dohod.ru сложная
-                # В реальном проекте здесь должен быть цикл по строкам с проверкой дат
-                pass
+            cols_lower = [str(c).lower() for c in df.columns]
+            # Ищем таблицу, где есть дата и слово "дивиденд" или "выплата"
+            if any('дата' in c for c in cols_lower) and any('дивиденд' in c or 'выплата' in c or 'размер' in c for c in cols_lower):
                 
+                date_col, val_col = None, None
+                for i, c in enumerate(cols_lower):
+                    if 'дата' in c and date_col is None: date_col = i
+                    if ('дивиденд' in c or 'выплата' in c or 'размер' in c) and val_col is None: val_col = i
+
+                if date_col is not None and val_col is not None:
+                    for _, row in df.iterrows():
+                        date_str = str(row.iloc[date_col])
+                        val_str = str(row.iloc[val_col]).replace(',', '.').replace(' ', '').replace('₽', '')
+                        
+                        try:
+                            # Ищем дату в формате DD.MM.YYYY
+                            date_match = re.search(r'(\d{2}\.\d{2}\.\d{4})', date_str)
+                            if date_match:
+                                reg_date = datetime.strptime(date_match.group(1), "%d.%m.%Y").date()
+                                # Берем только прошедшие даты в пределах последнего года
+                                if one_year_ago <= reg_date <= today:
+                                    clean_val = re.sub(r'[^\d.]', '', val_str)
+                                    if clean_val:
+                                        total_div += float(clean_val)
+                        except Exception:
+                            pass
+                    
+                    if total_div > 0:
+                        break
+
+        result["div_12m"] = total_div
         return result
-    except Exception as e:
+    except Exception:
         return result
 
 @st.cache_data(ttl=86400, show_spinner=False)
@@ -146,7 +174,6 @@ def fetch_dividends_smartlab(ticker: str) -> dict:
         tables = pd.read_html(url, encoding='cp1251')
         if not tables: return result
         # Заглушка: логика парсинга Smart-Lab для брутто/нетто
-        # (требует точной настройки под их текущую таблицу)
         return result
     except Exception:
         return result
