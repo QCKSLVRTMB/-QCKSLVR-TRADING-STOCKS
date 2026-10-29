@@ -146,49 +146,47 @@ def fetch_dividends_dohod(ticker: str) -> dict:
         if r.status_code != 200:
             return result
 
+        # 1. Попытка через Pandas read_html
+        try:
+            tables = pd.read_html(r.text)
+            for df in tables:
+                if 'DSI' in df.columns and 'Период' in df.columns:
+                    for _, row in df.iterrows():
+                        if "12м" in str(row['Период']):
+                            try:
+                                result["div_12m"] = float(str(row['Выплата на акцию (прогноз)']).replace(' ', '').replace(',', '.'))
+                            except: pass
+                            try:
+                                d_val = float(str(row['DSI']).replace(',', '.'))
+                                if 0 <= d_val <= 1: result["dsi"] = d_val
+                            except: pass
+                            return result
+        except Exception:
+            pass
+
+        # 2. Резервный парсер через BeautifulSoup (если Pandas не справился)
         soup = BeautifulSoup(r.text, 'html.parser')
-        
-        # Ищем таблицу с дивидендами
         table = None
         for t in soup.find_all('table'):
-            headers = [th.get_text(strip=True) for th in t.find_all('th')]
-            if 'DSI' in headers:
+            if t.find('th', string=re.compile('DSI')):
                 table = t
                 break
-
+        
         if table:
             tbody = table.find('tbody')
             if tbody:
                 for row in tbody.find_all('tr'):
                     cells = row.find_all('td')
-                    if len(cells) >= 4:
-                        # Период находится в 3-й колонке (индекс 2)
+                    if len(cells) >= 12: 
                         period = cells[2].get_text(strip=True)
-                        
-                        # DSI всегда находится в самом последнем столбце таблицы (индекс -1)
-                        dsi_text = cells[-1].get_text(strip=True).replace(',', '.')
-                        try:
-                            d = float(dsi_text)
-                            if 0.0 <= d <= 1.0:
-                                result["dsi"] = d
-                        except ValueError:
-                            pass
-
-                        # Если нашли строку "всего 12м", берем из нее дивиденд (индекс 3)
-                        if "всего 12м" in period:
-                            div_text = cells[3].get_text(strip=True).replace(' ', '').replace(',', '.')
+                        if "всего 12м" in period or "12м" in period:
                             try:
-                                result["div_12m"] = float(div_text)
-                            except ValueError:
-                                pass
-                            break
-
-        # Запасной вариант, если таблицу найти не удалось
-        if result["div_12m"] == 0.0:
-            text = soup.get_text(separator=' ', strip=True)
-            div_match = re.search(r'Совокупные дивиденды в следующие 12m:\s*([0-9]+[.,]?[0-9]*)\s*руб', text, re.IGNORECASE)
-            if div_match:
-                result["div_12m"] = float(div_match.group(1).replace(',', '.'))
+                                result["div_12m"] = float(cells[3].get_text(strip=True).replace(' ', '').replace(',', '.'))
+                            except: pass
+                            try:
+                                result["dsi"] = float(cells[-1].get_text(strip=True).replace(',', '.'))
+                            except: pass
+                            return result
 
         return result
     except Exception:
