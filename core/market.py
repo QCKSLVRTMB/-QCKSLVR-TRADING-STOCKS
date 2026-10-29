@@ -105,37 +105,6 @@ def fetch_extreme_close(ticker: str, date_val, market: str = "index") -> tuple[f
     except Exception:
         return 0.0, "-"
 
-@st.cache_data(ttl=None, show_spinner=False)
-def fetch_all_closes_on_date(date_val) -> dict[str, float]:
-    try:
-        if isinstance(date_val, str):
-            d = datetime.strptime(date_val, "%d.%m.%Y")
-        elif isinstance(date_val, datetime):
-            d = date_val
-        elif isinstance(date_val, date):
-            d = datetime.combine(date_val, datetime.min.time())
-        else:
-            return {}
-
-        monday = d - timedelta(days=d.isoweekday() - 1)
-        friday = monday + timedelta(days=4)
-        today = datetime.now()
-        if friday > today: friday = today
-
-        frm, till = monday.strftime("%Y-%m-%d"), friday.strftime("%Y-%m-%d")
-        
-        url = "https://iss.moex.com/iss/history/engines/stock/markets/shares/boards/TQBR/securities.json"
-        r = _session().get(url, params={"from": frm, "till": till, "iss.meta": "off", "limit": 1000}, timeout=15)
-        js = r.json()
-        hist = pd.DataFrame(js["history"]["data"], columns=js["history"]["columns"])
-        if hist.empty: return {}
-        
-        hist["TRADEDATE"] = pd.to_datetime(hist["TRADEDATE"])
-        hist = hist.sort_values("TRADEDATE").groupby("SECID").last().reset_index()
-        return dict(zip(hist["SECID"], hist["CLOSE"]))
-    except Exception:
-        return {}
-
 @st.cache_data(ttl=86400, show_spinner=False)
 def fetch_dividends_dohod(ticker: str) -> dict:
     url = f"https://www.dohod.ru/ik/analytics/dividend/{ticker.lower()}"
@@ -175,11 +144,6 @@ def fetch_dividends_dohod(ticker: str) -> dict:
     except Exception:
         return result
 
-# ЗАГЛУШКА ДЛЯ SMART-LAB (чтобы portfolio.py не падал)
-@st.cache_data(ttl=86400, show_spinner=False)
-def fetch_dividends_smartlab(ticker: str) -> dict:
-    return {"div_gross": 0.0, "div_net": 0.0, "tax": 0.13}
-
 @st.cache_data(ttl=180, show_spinner=False)
 def fetch_moex_candles(ticker: str, interval: int, days_back: int = 60, market: str = "shares") -> pd.DataFrame:
     frm = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
@@ -213,33 +177,3 @@ def fetch_moex_candles(ticker: str, interval: int, days_back: int = 60, market: 
     if "Volume" not in df: df["Volume"] = 0
     df["Date"] = pd.to_datetime(df["Date"])
     return df.set_index("Date").sort_index().dropna(subset=["Open", "High", "Low", "Close"])[["Open", "High", "Low", "Close", "Volume"]]
-
-def parse_sources_excel(file) -> dict:
-    result = {"w_formations": {}, "fundamental_data": {}, "portfolio_data": []}
-    try:
-        xls = pd.ExcelFile(file)
-        sheets = xls.sheet_names
-        
-        if 'W_Formations' in sheets:
-            df_w = pd.read_excel(xls, sheet_name='W_Formations')
-            if len(df_w.columns) >= 2:
-                result["w_formations"] = dict(zip(df_w.iloc[:, 0].astype(str).str.upper(), df_w.iloc[:, 1]))
-        
-        if 'Fundamentals' in sheets:
-            df_fund = pd.read_excel(xls, sheet_name='Fundamentals')
-            if len(df_fund.columns) >= 3:
-                new_fund = {}
-                for _, row in df_fund.iterrows():
-                    ticker = str(row.iloc[0]).strip().upper()
-                    ars = int(row.iloc[1]) if pd.notna(row.iloc[1]) else 0
-                    dsi = float(row.iloc[2]) if pd.notna(row.iloc[2]) else 0.0
-                    new_fund[ticker] = {"ars_group": ars, "dsi": dsi}
-                result["fundamental_data"] = new_fund
-                
-        if 'Portfolio' in sheets:
-            df_port = pd.read_excel(xls, sheet_name='Portfolio')
-            result["portfolio_data"] = df_port.to_dict(orient="records")
-            
-    except Exception as e:
-        st.error(f"Ошибка чтения Excel: {e}")
-    return result
