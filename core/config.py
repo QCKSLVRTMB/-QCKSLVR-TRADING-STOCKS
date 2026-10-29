@@ -27,6 +27,13 @@ TOOLS = {
     "cluster_range": "Диапазон кластеров"
 }
 
+# Тарифы для расчета комиссий (Акции)
+TARIFF_CONFIGS = {
+    "Т-Инвестиции": {"type": "percent", "broker_percent": 0.0004, "min_fee": 0.01}, # 0.04%
+    "Финам": {"type": "percent", "broker_percent": 0.0003, "min_fee": 0.01},        # 0.03%
+    "Без комиссии": {"type": "percent", "broker_percent": 0.0, "min_fee": 0.0},
+}
+
 INDEX_META = {
     "MOEXCH": {"name": "Химия", "color": "#8BC34A"},
     "MOEXCN": {"name": "Потребительский", "color": "#FF0000"},
