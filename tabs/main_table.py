@@ -2,7 +2,6 @@ from __future__ import annotations
 import streamlit as st
 import pandas as pd
 from core import state
-from core.config import TREND_VALUES
 
 def render_main_tab(df_stocks: pd.DataFrame, deposit: float):
     st.subheader("Обзор рынка акций")
@@ -53,38 +52,3 @@ def render_main_tab(df_stocks: pd.DataFrame, deposit: float):
         state.set_global("active_tickers", selected)
         state.autosave()
         st.rerun()
-
-    # === 3. НАСТРОЙКА ТРЕНДОВ ===
-    st.markdown("#### Настройка параметров рынка")
-    if not active:
-        st.caption("Выберите хотя бы одну акцию выше.")
-        return
-        
-    rows = []
-    for t in active:
-        m = state.ticker(t)["market"]
-        rows.append({
-            "Тикер": t, 
-            "Тренд": m.get("trend", "вверх"), 
-            "Волна": m.get("wave", "вверх"), 
-            "Тенденция": m.get("tendency", "вверх")
-        })
-    
-    t_df = pd.DataFrame(rows)
-    t_edited = st.data_editor(
-        t_df, 
-        use_container_width=True, 
-        hide_index=True,
-        column_config={
-            "Тренд": st.column_config.SelectboxColumn(options=TREND_VALUES, required=True),
-            "Волна": st.column_config.SelectboxColumn(options=TREND_VALUES, required=True),
-            "Тенденция": st.column_config.SelectboxColumn(options=TREND_VALUES, required=True)
-        },
-        disabled=["Тикер"]
-    )
-    
-    for _, r in t_edited.iterrows():
-        state.ticker(r["Тикер"])["market"].update({
-            "trend": r["Тренд"], "wave": r["Волна"], "tendency": r["Тенденция"]
-        })
-    state.autosave()
