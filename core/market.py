@@ -4,6 +4,7 @@ import pandas as pd
 import requests
 import streamlit as st
 from requests.adapters import HTTPAdapter, Retry
+import time
 from core.config import INDEX_META
 
 ISS_SHARES = "https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/securities.json?iss.meta=off&iss.only=securities,marketdata&limit=1000"
@@ -29,7 +30,6 @@ def fetch_moex_stocks() -> pd.DataFrame:
         st.warning(f"ISS недоступен: {e}")
         return pd.DataFrame()
 
-    # Защита от отсутствия колонок
     for col in ["LOTSIZE", "MINSTEP", "PREVPRICE", "LISTLEVEL", "ISSUESIZE", "DECIMALS", "SECID", "SHORTNAME"]:
         if col not in sec.columns: sec[col] = 0 if col not in ["SECID", "SHORTNAME"] else ""
     for col in ["LAST", "VALTODAY", "LASTCHANGEPRCNT", "NUMTRADES", "SECID"]:
@@ -57,8 +57,6 @@ def fetch_moex_indices() -> pd.DataFrame:
         return pd.DataFrame()
 
     valid_tickers = ["IMOEX"] + list(INDEX_META.keys())
-    
-    # Защита от пустых данных
     if "SECID" not in mkt.columns: mkt["SECID"] = ""
     if "CURRENTVALUE" not in mkt.columns: mkt["CURRENTVALUE"] = 0.0
     if "LASTCHANGEPRCNT" not in mkt.columns: mkt["LASTCHANGEPRCNT"] = 0.0
@@ -74,7 +72,6 @@ def fetch_moex_indices() -> pd.DataFrame:
 @st.cache_data(ttl=None, show_spinner=False)
 def fetch_extreme_close(index_ticker: str, date_val) -> tuple[float, str]:
     try:
-        # Обработка разных типов даты (строка или date/datetime)
         if isinstance(date_val, str):
             d = datetime.strptime(date_val, "%d.%m.%Y")
         elif isinstance(date_val, datetime):
@@ -108,18 +105,32 @@ def fetch_moex_candles(ticker: str, interval: int, days_back: int = 60, market: 
     frm = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
     till = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
     url = ISS_CANDLES.format(market=market, ticker=ticker)
-    try:
-        r = _session().get(url, params={"interval": interval, "from": frm, "till": till, "iss.meta": "off"}, timeout=15)
-        block = r.json().get("candles") or {}
-        data = block.get("data") or []
-        if not data: return pd.DataFrame()
-        df = pd.DataFrame(data, columns=block["columns"])
-        df = df.rename(columns={"begin": "Date", "open": "Open", "high": "High", "low": "Low", "close": "Close", "volume": "Volume"})
-        df["Date"] = pd.to_datetime(df["Date"])
-        return df.set_index("Date").sort_index()
-    except Exception:
-        return pd.DataFrame()
+    
+    # ВОССТАНОВЛЕНА ПАГИНАЦИЯ
+    chunks, start = [], 0
+    for _ in range(30):
+        try:
+            r = _session().get(url, params={"interval": interval, "from": frm, "till": till, "start": start, "iss.meta": "off"}, timeout=15)
+            r.raise_for_status()
+            block = r.json().get("candles") or {}
+        except Exception:
+            break
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def fetch_dividends_smartlab(ticker: str) -> dict:
-    return {"div_12m": 0.0, "dsi": 0.5} # Временная заглушка
+        data = block.get("data") or []
+        if not data: break
+        chunks.append(pd.DataFrame(data, columns=block["columns"]))
+
+        if len(data) < 500: break
+        start += 500
+        time.sleep(0.1)
+
+    if not chunks: return pd.DataFrame()
+    df = pd.concat(chunks, ignore_index=True).drop_duplicates(subset=["begin"])
+    
+    need = {"begin", "open", "high", "low", "close"}
+    if not need.issubset(df.columns): return pd.DataFrame()
+    
+    df = df.rename(columns={"begin": "Date", "open": "Open", "high": "High", "low": "Low", "close": "Close", "volume": "Volume"})
+    if "Volume" not in df: df["Volume"] = 0
+    df["Date"] = pd.to_datetime(df["Date"])
+    return df.set_index("Date").sort_index().dropna(subset=["Open", "High", "Low", "Close"])[["Open", "High", "Low", "Close", "Volume"]]
