@@ -1,4 +1,6 @@
 import pandas as pd
+import re
+import difflib
 from core.market import fetch_extreme_close, fetch_dividends_dohod
 from core import state
 from core.config import DEFAULT_ARSAGERA_GROUPS, DEFAULT_W_FORMATIONS
@@ -8,6 +10,46 @@ IMOEX_CONSTITUENTS = {
     "YNDX", "OZON", "VTBR", "ALRS", "CHMF", "NLMK", "MAGN", "MTSS", 
     "MGNT", "MOEX", "PHOR", "SNGS", "TATNP", "TRNFP", "AFKS", "RTKM"
 }
+
+def normalize_name(s):
+    """Убирает пробелы, кавычки и знаки препинания для корректного сравнения"""
+    return re.sub(r'[^А-ЯЁA-Z0-9]', '', str(s).upper())
+
+def get_whitelist(df_stocks, ars_data, dohod_data):
+    """Возвращает список тикеров, которые есть в Арсагере или в Доходе"""
+    ars_tickers = set(ars_data.keys())
+    dohod_names_clean = {normalize_name(n): n for n in dohod_data.keys()}
+    
+    whitelist = []
+    for _, row in df_stocks.iterrows():
+        secid = row["SECID"]
+        clean_shortname = normalize_name(row["SHORTNAME"])
+        
+        # 1. Прямое совпадение тикера в Арсагере
+        if secid in ars_tickers:
+            whitelist.append(secid)
+            continue
+            
+        # 2. Точное совпадение названия в Доходе
+        if clean_shortname in dohod_names_clean:
+            whitelist.append(secid)
+            continue
+            
+        # 3. Частичное совпадение названия (например, "Сбербанк" и "Сбербанк России")
+        matched = False
+        for clean_d in dohod_names_clean.keys():
+            if clean_shortname in clean_d or clean_d in clean_shortname:
+                whitelist.append(secid)
+                matched = True
+                break
+        if matched: continue
+            
+        # 4. Нечеткое совпадение (Fuzzy)
+        matches = difflib.get_close_matches(clean_shortname, list(dohod_names_clean.keys()), n=1, cutoff=0.85)
+        if matches:
+            whitelist.append(secid)
+            
+    return whitelist
 
 def calc_ranking(df: pd.DataFrame, state_w_forms: dict, cb_rate: float, closes_on_extreme: dict, imoex_ext: float, imoex_curr: float) -> pd.DataFrame:
     df = df.copy()
@@ -46,21 +88,21 @@ def calc_ranking(df: pd.DataFrame, state_w_forms: dict, cb_rate: float, closes_o
     
     # 4. Дивиденды
     dohod_data = state.g("dohod_data", {})
+    dohod_names_clean = {normalize_name(n): data for n, data in dohod_data.items()}
     
     def get_div_data(row):
         ticker = row["SECID"]
-        shortname = str(row["SHORTNAME"]).strip().upper()
+        clean_shortname = normalize_name(row["SHORTNAME"])
         
-        # 1. Ищем в загруженном файле по имени
-        if shortname in dohod_data:
-            return dohod_data[shortname]["div"], dohod_data[shortname]["dsi"]
+        if clean_shortname in dohod_names_clean:
+            data = dohod_names_clean[clean_shortname]
+            return data["div"], data["dsi"]
             
-        # 2. Частичное совпадение (например, "Сбербанк" и "Сбербанк России")
-        for name, data in dohod_data.items():
-            if shortname in name or name in shortname:
+        for clean_d, data in dohod_names_clean.items():
+            if clean_shortname in clean_d or clean_d in clean_shortname:
                 return data["div"], data["dsi"]
                 
-        # 3. Если файл не загружен — идем в интернет
+        # Если нет в файле, идем в интернет
         res = fetch_dividends_dohod(ticker)
         return res.get("div_12m", 0.0), res.get("dsi", 0.0)
 
