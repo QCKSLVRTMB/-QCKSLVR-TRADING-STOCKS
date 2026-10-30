@@ -51,7 +51,8 @@ def render_rating():
         )
     with fc3:
         w_filter = st.selectbox(
-            "W-формация", ["все", "вверх", "рейндж", "вниз", "нет данных"],
+            "W-формация",
+            ["все", "только с данными", "вверх", "рейндж", "вниз", "нет данных"],
             key="rating_w",
         )
     with fc4:
@@ -94,6 +95,8 @@ def render_rating():
 
     if w_filter == "нет данных":
         mask &= df["w_form"] == "-"
+    elif w_filter == "только с данными":
+        mask &= df["w_form"] != "-"
     elif w_filter != "все":
         mask &= df["w_form"] == w_filter
 
