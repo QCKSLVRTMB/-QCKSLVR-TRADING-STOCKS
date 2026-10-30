@@ -1,265 +1,355 @@
-"""
-Калькулятор акций MOEX — точка входа Streamlit.
-"""
 from __future__ import annotations
-
-import inspect
-import json
-import tempfile
-from pathlib import Path
-
-import pandas as pd
 import streamlit as st
+from datetime import datetime
+import pandas as pd
+import re
+from core import state, storage
+from core.config import APP_TITLE
+from core.market import fetch_moex_stocks
+from tabs.main_table import render_main_tab
+from tabs.indices import render_indices
+from tabs.rating import render_rating
+from tabs.portfolio import render_portfolio
+from tabs.trade_planner import render_trade_planner
+from ui.theme import inject_css, seg
 
-from core import state as app_state
+st.set_page_config(page_title=APP_TITLE, layout="wide", initial_sidebar_state="expanded")
+inject_css()
 
-st.set_page_config(
-    page_title="Калькулятор акций MOEX",
-    page_icon="📈",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
+S = state.get_state()
+G = S["global"]
 
+def _sync(key, gkey):
+    state.set_global(gkey, st.session_state[key])
 
-# ============================================================
-# Безопасные импорты
-# ============================================================
-def _safe_import(module_path: str, names: list[str] | None = None, required: bool = False):
+def _sync_extreme():
+    val = st.session_state.sb_extreme
     try:
-        mod = __import__(module_path, fromlist=names or ["*"])
-        if names:
-            missing = [n for n in names if not hasattr(mod, n)]
-            if missing:
-                msg = f"В модуле {module_path} нет: {', '.join(missing)}"
-                (st.error if required else st.warning)(msg)
-                if required:
-                    st.stop()
-                return None
-        return mod
-    except Exception as e:
-        msg = f"Не удалось импортировать {module_path}: {e!r}"
-        (st.error if required else st.warning)(msg)
-        if required:
-            st.stop()
-        return None
-
-
-cfg        = _safe_import("core.config", required=False)
-parsers    = _safe_import("core.parsers", names=["load_sources"], required=False)
-ranking    = _safe_import("core.ranking", names=["calc_ranking"], required=False)
-storage    = _safe_import("core.storage", required=False)
-theme      = _safe_import("ui.theme", required=False)
-
-load_sources = getattr(parsers, "load_sources", None)
-calc_ranking = getattr(ranking, "calc_ranking", None)
-
-if load_sources is None:
-    st.error("**core/parsers.py** не найден или не экспортирует `load_sources`.")
-if calc_ranking is None:
-    st.error("**core/ranking.py** не экспортирует `calc_ranking`.")
-
-if theme and hasattr(theme, "inject_css"):
-    try:
-        theme.inject_css()
-    except Exception as e:
-        st.warning(f"ui.theme.inject_css упал: {e!r}")
-
-tab_modules = {}
-for name in ("main_table", "rating", "indices", "portfolio", "trade_planner", "help"):
-    tab_modules[name] = _safe_import(f"tabs.{name}", required=False)
+        datetime.strptime(val, "%d.%m.%Y")
+        state.set_global("extreme_date", val)
+    except ValueError:
+        st.error("Неверный формат даты. Используйте DD.MM.YYYY")
 
 
 # ============================================================
-# Дефолты
+# Excel-парсеры (внутренние)
 # ============================================================
-DEFAULTS = {
-    # cb_rate — в ПРОЦЕНТАХ, как ждёт core/ranking.py
-    "cb_rate": float(getattr(cfg, "CB_RATE", 16.0)) if cfg else 16.0,
-    "deposit": float(getattr(cfg, "DEPOSIT", 1_000_000.0)) if cfg else 1_000_000.0,
-    "cash_reserve_pct": float(getattr(cfg, "CASH_RESERVE_PCT", 10.0)) if cfg else 10.0,
-    "extremum_date": str(getattr(cfg, "EXTREMUM_DATE", "2024-05-20")) if cfg else "2024-05-20",
-    "risk_per_trade_pct": float(getattr(cfg, "RISK_PER_TRADE_PCT", 2.0)) if cfg else 2.0,
+_TICKER_RE = re.compile(r'^[A-ZА-Я0-9]{1,10}$')
+
+_W_ALIASES = {
+    "вверх": "вверх", "up": "вверх", "рост": "вверх",
+    "вниз":  "вниз",  "down": "вниз", "падение": "вниз",
+    "рейндж": "рейндж", "range": "рейндж", "боковик": "рейндж", "flat": "рейндж",
 }
-st.session_state.setdefault("cfg", dict(DEFAULTS))
-st.session_state.setdefault("sources", None)
-st.session_state.setdefault("portfolio", None)
-st.session_state.setdefault("portfolio_path", None)
 
 
-def _push_sources_to_state(sources: dict) -> None:
-    """
-    Перекладывает результат load_sources() в формат, который читает calc_ranking:
-      state.g('fundamental_data') = { ticker: {'ars_group': int, 'dsi': float(0..1)} }
-      state.g('w_formations')     = { ticker: 'вверх'|'вниз'|'рейндж' }
-    """
-    if not sources:
-        return
-    fundamental = {}
-    for tk, info in sources.get("arsagera", {}).items():
-        dsi_raw = sources.get("dsi", {}).get(tk)
-        # parsers возвращает DSI уже ×100 (96.0), приводим к 0..1 как ждёт calc_ranking
-        dsi_val = (float(dsi_raw) / 100.0) if dsi_raw is not None else 0.0
-        fundamental[tk] = {
-            "ars_group": int(info.get("group", 0) or 0),
-            "dsi": dsi_val,
-        }
-    app_state.s("fundamental_data", fundamental)
-    app_state.s("w_formations", dict(sources.get("w") or {}))
+def _norm(text) -> str:
+    if pd.isna(text):
+        return ""
+    return re.sub(r'[^\wа-яё]', '', str(text).strip().lower(), flags=re.IGNORECASE)
+
+
+def _split_class(raw) -> tuple[str, str]:
+    """'Сургутнефтегаз, ап' → ('сургутнефтегаз','preferred'); 'Сбербанк России' → ('сбербанкроссии','common')"""
+    if pd.isna(raw):
+        return "", "common"
+    s_raw = str(raw).strip().lower()
+    s_norm = _norm(s_raw)
+    if not s_norm:
+        return "", "common"
+    for pat in ('-pref', ' pref', '-ап', ', ап', ' ап', '-п', ' п'):
+        if s_raw.endswith(pat) and len(s_raw) > len(pat):
+            m = _norm(pat)
+            if m and s_norm.endswith(m):
+                return s_norm[:-len(m)], 'preferred'
+            return s_norm, 'preferred'
+    for pat in ('-ord', ' ord', '-ао', ' ао', '-ao', ' ao'):
+        if s_raw.endswith(pat) and len(s_raw) > len(pat):
+            m = _norm(pat)
+            if m and s_norm.endswith(m):
+                return s_norm[:-len(m)], 'common'
+            return s_norm, 'common'
+    return s_norm, 'common'
+
+
+def _lookup_ticker(name, name_index: dict):
+    """DSI-название → тикер. 1) exact, 2) prefix, 3) substring."""
+    base, cls = _split_class(name)
+    if not base:
+        return None
+    t = name_index.get((base, cls))
+    if t:
+        return t
+    best, best_len = None, 0
+    for (nb, nc), ticker in name_index.items():
+        if nc != cls or not nb:
+            continue
+        if nb.startswith(base) or base.startswith(nb):
+            overlap = min(len(nb), len(base))
+            if overlap >= 4 and overlap > best_len:
+                best, best_len = ticker, overlap
+    if best:
+        return best
+    for (nb, nc), ticker in name_index.items():
+        if nc != cls or not nb:
+            continue
+        if (base in nb or nb in base) and min(len(base), len(nb)) >= 3:
+            return ticker
+    return None
+
+
+def _parse_arsagera(df_ars) -> tuple[dict, dict]:
+    """4 горизонтальных блока A-D / F-I / K-N / P-S.
+       Возвращает ars_dict={ticker: group(1..4)} и name_index={(base, cls): ticker}."""
+    ars_dict, name_index = {}, {}
+    if df_ars is None or df_ars.empty:
+        return ars_dict, name_index
+
+    for group_num, start_col in enumerate([0, 5, 10, 15], start=1):
+        if start_col >= df_ars.shape[1]:
+            continue
+        # данные начинаются с индекса 2 (0-объединённый заголовок «1..4», 1-шапка «Тикер/Ранг»)
+        for i in range(2, len(df_ars)):
+            t_raw = df_ars.iloc[i, start_col] if start_col < df_ars.shape[1] else None
+            n_raw = df_ars.iloc[i, start_col + 1] if start_col + 1 < df_ars.shape[1] else None
+            if pd.isna(t_raw) or pd.isna(n_raw):
+                continue
+            ticker = str(t_raw).strip().upper()
+            if not _TICKER_RE.match(ticker):
+                continue
+            if ticker in {'ТИКЕР', 'TICKER'}:
+                continue
+            name = str(n_raw).strip()
+            if not name:
+                continue
+            if ticker not in ars_dict:
+                ars_dict[ticker] = group_num
+            base, cls = _split_class(name)
+            if base:
+                name_index.setdefault((base, cls), ticker)
+    return ars_dict, name_index
+
+
+def _parse_dsi(df_dsi, name_index: dict) -> dict:
+    """Колонка B = Название, колонка G = DSI. Возвращает {ticker: value_0_to_1}."""
+    dsi_dict = {}
+    if df_dsi is None or df_dsi.empty:
+        return dsi_dict
+
+    col_name = next((c for c in df_dsi.columns if 'Акция' in str(c)), None)
+    col_dsi = next((c for c in df_dsi.columns if 'DSI' in str(c)), None)
+    if not col_name or not col_dsi:
+        return dsi_dict
+
+    for _, row in df_dsi.iterrows():
+        name = row[col_name]
+        dsi_val = row[col_dsi]
+        if pd.isna(name) or pd.isna(dsi_val):
+            continue
+        ticker = _lookup_ticker(name, name_index)
+        if ticker and ticker not in dsi_dict:
+            try:
+                dsi_dict[ticker] = float(dsi_val)
+            except (TypeError, ValueError):
+                continue
+    return dsi_dict
+
+
+def _parse_w_df(df_w) -> dict:
+    """Ищет в DataFrame колонку с значениями {вверх/вниз/рейндж}. Если нет — {}."""
+    result = {}
+    if df_w is None or df_w.empty:
+        return result
+
+    # 1) найти колонку с направлениями (по содержимому, не по имени)
+    direction_col = None
+    for col in df_w.columns:
+        vals = df_w[col].dropna().astype(str).str.lower().str.strip()
+        if vals.isin(set(_W_ALIASES.keys())).any():
+            direction_col = col
+            break
+    if direction_col is None:
+        return result
+
+    # 2) тикерная колонка: сначала по имени, потом по первой
+    ticker_col = next(
+        (c for c in df_w.columns if 'тикер' in str(c).lower() or 'ticker' in str(c).lower()),
+        df_w.columns[0],
+    )
+    if ticker_col == direction_col:
+        ticker_col = df_w.columns[1] if len(df_w.columns) > 1 else df_w.columns[0]
+
+    for _, row in df_w.iterrows():
+        t_raw = row[ticker_col]
+        d_raw = row[direction_col]
+        if pd.isna(t_raw) or pd.isna(d_raw):
+            continue
+        ticker = str(t_raw).strip().upper()
+        if not _TICKER_RE.match(ticker):
+            continue
+        if ticker in {'ТИКЕР', 'TICKER'}:
+            continue
+        direction = str(d_raw).strip().lower()
+        if direction in _W_ALIASES:
+            result[ticker] = _W_ALIASES[direction]
+    return result
+
+
+def _parse_w_any(xls: pd.ExcelFile) -> dict:
+    """Универсальный парсер W: сначала лист 'W-формации', иначе первый лист."""
+    if 'W-формации' in xls.sheet_names:
+        df_w = pd.read_excel(xls, sheet_name='W-формации', header=None)
+        # столбец с направлениями ищем по содержимому
+        direction_idx = None
+        for i in range(df_w.shape[1]):
+            vals = df_w.iloc[:, i].dropna().astype(str).str.lower().str.strip()
+            if vals.isin(set(_W_ALIASES.keys())).any():
+                direction_idx = i
+                break
+        if direction_idx is None:
+            return {}
+        ticker_idx = 0 if direction_idx != 0 else 1
+        result = {}
+        for _, row in df_w.iterrows():
+            t_raw = row.iloc[ticker_idx] if ticker_idx < len(row) else None
+            d_raw = row.iloc[direction_idx] if direction_idx < len(row) else None
+            if pd.isna(t_raw) or pd.isna(d_raw):
+                continue
+            ticker = str(t_raw).strip().upper()
+            if not _TICKER_RE.match(ticker) or ticker in {'ТИКЕР', 'TICKER'}:
+                continue
+            direction = str(d_raw).strip().lower()
+            if direction in _W_ALIASES:
+                result[ticker] = _W_ALIASES[direction]
+        return result
+
+    # fallback: первый лист (с шапкой)
+    df_w = pd.read_excel(xls, sheet_name=0)
+    return _parse_w_df(df_w)
 
 
 # ============================================================
 # Сайдбар
 # ============================================================
 with st.sidebar:
-    st.title("⚙️ Настройки")
-    c = st.session_state["cfg"]
-
-    c["cb_rate"] = st.number_input(
-        "Ставка ЦБ, %",                       # ← процент, как в calc_ranking
-        min_value=0.0, max_value=100.0,
-        value=float(c["cb_rate"]),
-        step=0.25,
-    )
-    c["deposit"] = st.number_input(
-        "Депозит, ₽", min_value=0.0,
-        value=float(c["deposit"]), step=10_000.0, format="%.0f",
-    )
-    c["cash_reserve_pct"] = st.slider(
-        "Резерв кэша, %", 0, 100, int(c["cash_reserve_pct"]),
-    )
-    c["risk_per_trade_pct"] = st.slider(
-        "Риск на сделку, %", 0.1, 10.0, float(c["risk_per_trade_pct"]), step=0.1,
-    )
-    c["extremum_date"] = st.text_input(
-        "Дата экстремума (YYYY-MM-DD)", value=c["extremum_date"],
-    )
+    st.header("Настройки")
+    st.text_input("Экстремум", value=G["extreme_date"], key="sb_extreme", on_change=_sync_extreme)
+    st.number_input("Ставка ЦБ, %", value=float(G["cb_rate"]), step=0.25, format="%.2f", key="sb_cb", on_change=_sync, args=("sb_cb", "cb_rate"))
+    st.number_input("Депозит, ₽", value=int(G["deposit"]), step=1000, key="sb_dep", on_change=_sync, args=("sb_dep", "deposit"))
+    st.number_input("Резерв кэша, %", value=float(G["cash_reserve"]), step=1.0, key="sb_cash", on_change=_sync, args=("sb_cash", "cash_reserve"))
 
     st.divider()
-    st.subheader("📥 Источники.xlsx")
-    uploaded_sources = st.file_uploader(
-        "Арсагера + DSI + W-формации",
-        type=["xlsx"], key="uploader_sources",
-    )
-    if uploaded_sources is not None and load_sources is not None:
-        tmp = Path(tempfile.gettempdir()) / "Источники.xlsx"
-        tmp.write_bytes(uploaded_sources.getbuffer())
+    st.header("Импорт / Экспорт")
+
+    # 1. Импорт W-формаций
+    w_file = st.file_uploader("Импорт W-формаций (Excel)", type=["xlsx", "xls"])
+    if w_file:
         try:
-            sources = load_sources(str(tmp))
-            st.session_state["sources"] = sources
-            _push_sources_to_state(sources)          # ← ключевая связка
-            st.success(
-                f"Арсагера {len(sources['arsagera'])}, "
-                f"DSI {len(sources['dsi'])}, W {len(sources['w'])}"
-            )
-            if not sources["w"]:
-                st.warning("Лист «W-формации» пуст — W-баллы будут 0.")
+            xls = pd.ExcelFile(w_file)
+            new_w = _parse_w_any(xls)
+            if new_w:
+                state.set_global("w_formations", new_w)
+                st.success(f"W-формации загружены: {len(new_w)} тикеров")
+                state.autosave()
+                st.rerun()
+            else:
+                st.error("Не найдены направления (вверх/вниз/рейндж). "
+                         "W-формации не изменены (используются значения по умолчанию).")
         except Exception as e:
-            st.error(f"Ошибка парсинга Источники.xlsx: {e!r}")
+            st.error(f"Ошибка: {e}")
 
-    src = st.session_state.get("sources")
-    if src:
-        with st.expander("Проверка парсинга", expanded=False):
-            for tk in ("LKOH", "SBER", "TATN", "GAZP"):
-                a = src["arsagera"].get(tk, {})
-                d = src["dsi"].get(tk)
-                w = src["w"].get(tk)
-                st.caption(
-                    f"**{tk}** — Арсагера={a.get('score', '—')} "
-                    f"({a.get('name', '—')}), DSI={d if d is not None else '—'}, "
-                    f"W={w or '—'}"
-                )
-
-    st.divider()
-    st.subheader("📥 Портфель.xlsx")
-    uploaded_portfolio = st.file_uploader(
-        "Текущие позиции", type=["xlsx"], key="uploader_portfolio",
-    )
-    if uploaded_portfolio is not None:
-        tmp_p = Path(tempfile.gettempdir()) / "Портфель.xlsx"
-        tmp_p.write_bytes(uploaded_portfolio.getbuffer())
+    # 2. Импорт Источников (Арсагера + DSI, при наличии — и W-формации)
+    sources_file = st.file_uploader("Импорт Источников (Арсагера, DSI)", type=["xlsx", "xls"])
+    if sources_file:
         try:
-            df = pd.read_excel(str(tmp_p))
-            st.session_state["portfolio"] = df
-            st.session_state["portfolio_path"] = str(tmp_p)
-            st.success(f"Портфель: {len(df)} позиций")
-        except Exception as e:
-            st.error(f"Ошибка чтения Портфель.xlsx: {e!r}")
+            xls = pd.ExcelFile(sources_file)
 
-    st.divider()
-    st.subheader("💾 Профиль (JSON)")
-    if st.button("📤 Экспорт", use_container_width=True):
-        payload = {
-            "cfg": st.session_state["cfg"],
-            "portfolio": (
-                st.session_state["portfolio"].to_dict(orient="records")
-                if st.session_state.get("portfolio") is not None else []
-            ),
-        }
-        st.download_button(
-            "Скачать JSON",
-            data=json.dumps(payload, ensure_ascii=False, indent=2, default=str),
-            file_name="profile.json",
-            mime="application/json",
-            use_container_width=True,
-        )
-    uploaded_json = st.file_uploader(
-        "JSON", type=["json"], key="uploader_json", label_visibility="collapsed",
-    )
-    if uploaded_json is not None:
+            ars_dict, name_index = {}, {}
+            if 'Рейтинг арсагера' in xls.sheet_names:
+                df_ars = pd.read_excel(xls, sheet_name='Рейтинг арсагера', header=None)
+                ars_dict, name_index = _parse_arsagera(df_ars)
+
+            dsi_dict = {}
+            if 'ДОХОД DSI' in xls.sheet_names:
+                df_dsi = pd.read_excel(xls, sheet_name='ДОХОД DSI')
+                dsi_dict = _parse_dsi(df_dsi, name_index)
+
+            # если Источники.xlsx содержит 3-й лист W-формации — тоже подхватим
+            if 'W-формации' in xls.sheet_names:
+                w_dict = _parse_w_any(xls)
+                if w_dict:
+                    state.set_global("w_formations", w_dict)
+                    st.info(f"Из Источников также загружены W-формации: {len(w_dict)}")
+
+            fund_data = {}
+            for t in set(list(ars_dict.keys()) + list(dsi_dict.keys())):
+                fund_data[t] = {
+                    "ars_group": ars_dict.get(t, 0),
+                    "dsi": dsi_dict.get(t, 0.0),
+                }
+
+            state.set_global("fundamental_data", fund_data)
+            st.success(f"Загружено {len(fund_data)} записей (Арсагера {len(ars_dict)} + DSI {len(dsi_dict)})")
+            state.autosave()
+            st.rerun()
+        except Exception as e:
+            st.error(f"Ошибка чтения источников: {e}")
+
+    # 3. Портфель (Excel)
+    port_file = st.file_uploader("Импорт Портфеля (Excel)", type=["xlsx", "xls"])
+    if port_file:
         try:
-            payload = json.loads(uploaded_json.getvalue().decode("utf-8"))
-            st.session_state["cfg"].update(payload.get("cfg", {}))
-            if payload.get("portfolio"):
-                st.session_state["portfolio"] = pd.DataFrame(payload["portfolio"])
-            st.success("Профиль загружен.")
+            df_port = pd.read_excel(port_file)
+            state.set_global("portfolio_data", df_port.to_dict(orient="records"))
+            st.success("Портфель загружен!")
+            state.autosave()
+            st.rerun()
         except Exception as e:
-            st.error(f"Импорт JSON: {e!r}")
+            st.error(f"Ошибка: {e}")
 
+    if st.button("Подготовить экспорт JSON"):
+        st.session_state["_export_blob"] = storage.dumps(S)
+    blob = st.session_state.get("_export_blob")
+    if blob:
+        st.download_button("Скачать JSON", data=blob, file_name=f"backup_{datetime.now().strftime('%d_%m_%y')}.json", mime="application/json")
 
-# ============================================================
-# Безопасный вызов render()
-# ============================================================
-def _render_tab(mod, **ctx):
-    if mod is None:
-        st.info("Модуль вкладки недоступен — см. предупреждения выше.")
-        return
-    fn = getattr(mod, "render", None)
-    if fn is None:
-        st.warning(f"В модуле {mod.__name__} нет функции render().")
-        return
-    params = inspect.signature(fn).parameters
-    if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()):
-        fn(**ctx)
+    json_file = st.file_uploader("Импорт JSON (полный бэкап)", type=["json"])
+    if json_file and st.button("Применить бэкап"):
+        parsed = storage.loads(json_file.getvalue().decode("utf-8"))
+        if parsed:
+            state.replace_state(parsed)
+            st.success("Загружено!"); st.rerun()
+
+df_stocks = fetch_moex_stocks()
+
+tab_market, tab_rating, tab_indices, tab_portfolio, tab_calc = st.tabs([
+    "Обзор", "Рейтинг", "Индексы", "Портфель", "Калькулятор"
+])
+
+with tab_market:
+    try: render_main_tab(df_stocks=df_stocks, deposit=G["deposit"])
+    except Exception as e: st.error(f"Ошибка в 'Обзоре': {e}")
+
+with tab_rating:
+    try: render_rating()
+    except Exception as e: st.error(f"Ошибка в 'Рейтинге': {e}")
+
+with tab_indices:
+    try: render_indices()
+    except Exception as e: st.error(f"Ошибка в 'Индексах': {e}")
+
+with tab_portfolio:
+    try: render_portfolio(df_stocks=df_stocks)
+    except Exception as e: st.error(f"Ошибка в 'Портфеле': {e}")
+
+with tab_calc:
+    active_tickers = G.get("active_tickers", [])
+    if not active_tickers:
+        st.info("Выберите тикер на вкладке 'Обзор'.")
     else:
-        fn(**{k: v for k, v in ctx.items() if k in params})
+        active = seg("Инструмент", active_tickers, key="plan_ticker", default=active_tickers[0])
+        if not active or active not in active_tickers: active = active_tickers[0]
+        try: render_trade_planner(active, df_stocks)
+        except Exception as e: st.error(f"Ошибка в 'Калькуляторе': {e}")
 
-
-# ============================================================
-# Вкладки
-# ============================================================
-sources = st.session_state.get("sources")
-portfolio_df = st.session_state.get("portfolio")
-app_cfg = st.session_state["cfg"]
-
-t1, t2, t3, t4, t5, t6 = st.tabs(
-    ["📊 Обзор", "🏆 Рейтинг", "🌐 Индексы", "💼 Портфель", "🧮 Калькулятор", "❓ Справка"]
-)
-
-with t1:
-    _render_tab(tab_modules["main_table"],
-                sources=sources, portfolio=portfolio_df, cfg=app_cfg)
-with t2:
-    _render_tab(tab_modules["rating"],
-                sources=sources, portfolio=portfolio_df, cfg=app_cfg)
-with t3:
-    _render_tab(tab_modules["indices"], sources=sources, cfg=app_cfg)
-with t4:
-    _render_tab(tab_modules["portfolio"],
-                portfolio=portfolio_df,
-                portfolio_path=st.session_state.get("portfolio_path"),
-                sources=sources, cfg=app_cfg)
-with t5:
-    _render_tab(tab_modules["trade_planner"],
-                sources=sources, portfolio=portfolio_df, cfg=app_cfg)
-with t6:
-    _render_tab(tab_modules["help"])
+state.autosave()
