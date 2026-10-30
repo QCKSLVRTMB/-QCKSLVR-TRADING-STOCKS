@@ -25,7 +25,7 @@ def _session() -> requests.Session:
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_moex_stocks() -> pd.DataFrame:
     try:
-        r = _session().get(ISS_SHARES, timeout=30)
+        r = _session().get(ISS_SHARES, timeout=(10, 30))
         js = r.json()
         sec = pd.DataFrame(js["securities"]["data"], columns=js["securities"]["columns"])
         mkt = pd.DataFrame(js["marketdata"]["data"], columns=js["marketdata"]["columns"])
@@ -51,7 +51,7 @@ def fetch_moex_stocks() -> pd.DataFrame:
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_moex_indices() -> pd.DataFrame:
     try:
-        r = _session().get(ISS_INDICES, timeout=30)
+        r = _session().get(ISS_INDICES, timeout=(10, 30))
         js = r.json()
         sec = pd.DataFrame(js.get("securities", {}).get("data", []), columns=js.get("securities", {}).get("columns", []))
         mkt = pd.DataFrame(js.get("marketdata", {}).get("data", []), columns=js.get("marketdata", {}).get("columns", []))
@@ -108,17 +108,20 @@ def fetch_extreme_close(ticker: str, date_val, market: str = "index") -> tuple[f
 
 @st.cache_data(ttl=None, show_spinner=False)
 def fetch_many_extreme_closes(tickers: list[str], date_val) -> dict[str, float]:
-    """Параллельная загрузка цен экстремума для списка тикеров."""
     result = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
         future_to_ticker = {executor.submit(fetch_extreme_close, t, date_val, "shares"): t for t in tickers}
-        for future in concurrent.futures.as_completed(future_to_ticker):
-            t = future_to_ticker[future]
-            try:
-                price, _ = future.result()
-                result[t] = price
-            except Exception:
-                result[t] = 0.0
+        try:
+            # Ждем максимум 60 секунд на весь пул
+            for future in concurrent.futures.as_completed(future_to_ticker, timeout=60):
+                t = future_to_ticker[future]
+                try:
+                    price, _ = future.result(timeout=5)
+                    result[t] = price
+                except Exception:
+                    result[t] = 0.0
+        except concurrent.futures.TimeoutError:
+            pass # Возвращаем то, что успели
     return result
 
 @st.cache_data(ttl=86400, show_spinner=False)
@@ -127,7 +130,7 @@ def fetch_dividends_dohod(ticker: str) -> dict:
     result = {"div_12m": 0.0, "dsi": 0.0}
     
     try:
-        r = _session().get(url, timeout=15)
+        r = _session().get(url, timeout=(10, 15))
         if r.status_code != 200:
             return result
 
@@ -162,16 +165,19 @@ def fetch_dividends_dohod(ticker: str) -> dict:
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def fetch_many_dividends(tickers: list[str]) -> dict[str, dict]:
-    """Параллельная загрузка дивидендов для списка тикеров."""
     result = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
         future_to_ticker = {executor.submit(fetch_dividends_dohod, t): t for t in tickers}
-        for future in concurrent.futures.as_completed(future_to_ticker):
-            t = future_to_ticker[future]
-            try:
-                result[t] = future.result()
-            except Exception:
-                result[t] = {"div_12m": 0.0, "dsi": 0.0}
+        try:
+            # Ждем максимум 60 секунд
+            for future in concurrent.futures.as_completed(future_to_ticker, timeout=60):
+                t = future_to_ticker[future]
+                try:
+                    result[t] = future.result(timeout=5)
+                except Exception:
+                    result[t] = {"div_12m": 0.0, "dsi": 0.0}
+        except concurrent.futures.TimeoutError:
+            pass
     return result
 
 @st.cache_data(ttl=180, show_spinner=False)
