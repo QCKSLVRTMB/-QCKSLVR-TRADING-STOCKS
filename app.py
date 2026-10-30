@@ -1,11 +1,15 @@
 from __future__ import annotations
+
 import hashlib
-import streamlit as st
-from datetime import datetime
-import pandas as pd
 import re
+from datetime import datetime
+from pathlib import Path
+
+import pandas as pd
+import streamlit as st
+
 from core import state, storage
-from core.config import APP_TITLE, DEFAULT_W_FORMATIONS
+from core.config import APP_TITLE
 from core.market import fetch_moex_stocks
 from tabs.main_table import render_main_tab
 from tabs.indices import render_indices
@@ -20,8 +24,16 @@ inject_css()
 S = state.get_state()
 G = S["global"]
 
+# df_stocks нужен и в sidebar (валидация тикеров при загрузке портфеля)
+df_stocks = fetch_moex_stocks()
+
+
+# ============================================================
+# Хелперы
+# ============================================================
 def _sync(key, gkey):
     state.set_global(gkey, st.session_state[key])
+
 
 def _sync_extreme():
     val = st.session_state.sb_extreme
@@ -37,7 +49,7 @@ def _file_hash(f) -> str:
 
 
 # ============================================================
-# Excel-парсеры (внутренние)
+# Excel-парсеры
 # ============================================================
 _TICKER_RE = re.compile(r'^[A-ZА-Я0-9]{1,10}$')
 
@@ -78,7 +90,7 @@ def _split_class(raw) -> tuple[str, str]:
 
 
 def _lookup_ticker(name, name_index: dict):
-    """DSI-название → тикер. 1) exact, 2) prefix, 3) substring."""
+    """DSI-название → тикер: exact → prefix → substring."""
     base, cls = _split_class(name)
     if not base:
         return None
@@ -113,7 +125,6 @@ def _parse_arsagera(df_ars) -> tuple[dict, dict]:
     for group_num, start_col in enumerate([0, 5, 10, 15], start=1):
         if start_col >= df_ars.shape[1]:
             continue
-        # данные начинаются с индекса 2 (0-объединённый заголовок «1..4», 1-шапка «Тикер/Ранг»)
         for i in range(2, len(df_ars)):
             t_raw = df_ars.iloc[i, start_col] if start_col < df_ars.shape[1] else None
             n_raw = df_ars.iloc[i, start_col + 1] if start_col + 1 < df_ars.shape[1] else None
@@ -142,7 +153,7 @@ def _parse_dsi(df_dsi, name_index: dict) -> dict:
         return dsi_dict
 
     col_name = next((c for c in df_dsi.columns if 'Акция' in str(c)), None)
-    col_dsi = next((c for c in df_dsi.columns if 'DSI' in str(c)), None)
+    col_dsi  = next((c for c in df_dsi.columns if 'DSI' in str(c)), None)
     if not col_name or not col_dsi:
         return dsi_dict
 
@@ -161,7 +172,7 @@ def _parse_dsi(df_dsi, name_index: dict) -> dict:
 
 
 def _parse_w_df(df_w) -> dict:
-    """Ищет в DataFrame колонку с значениями {вверх/вниз/рейндж}. Если нет — {}."""
+    """Ищет в DataFrame колонку с направлениями {вверх/вниз/рейндж}. Иначе {}."""
     result = {}
     if df_w is None or df_w.empty:
         return result
@@ -188,9 +199,7 @@ def _parse_w_df(df_w) -> dict:
         if pd.isna(t_raw) or pd.isna(d_raw):
             continue
         ticker = str(t_raw).strip().upper()
-        if not _TICKER_RE.match(ticker):
-            continue
-        if ticker in {'ТИКЕР', 'TICKER'}:
+        if not _TICKER_RE.match(ticker) or ticker in {'ТИКЕР', 'TICKER'}:
             continue
         direction = str(d_raw).strip().lower()
         if direction in _W_ALIASES:
@@ -199,7 +208,7 @@ def _parse_w_df(df_w) -> dict:
 
 
 def _parse_w_any(xls: pd.ExcelFile) -> dict:
-    """Универсальный парсер W: сначала лист 'W-формации', иначе первый лист."""
+    """Сначала лист 'W-формации' (если есть), иначе первый лист."""
     if 'W-формации' in xls.sheet_names:
         df_w = pd.read_excel(xls, sheet_name='W-формации', header=None)
         direction_idx = None
@@ -229,6 +238,78 @@ def _parse_w_any(xls: pd.ExcelFile) -> dict:
     return _parse_w_df(df_w)
 
 
+def _parse_portfolio(df_raw: pd.DataFrame, df_stocks: pd.DataFrame):
+    """
+    Читает файл портфеля и возвращает (positions, error).
+    Из Excel используются ТОЛЬКО три колонки: Тикер, ТВХ, Лотов.
+    Все остальные колонки игнорируются.
+    """
+    if df_raw is None or df_raw.empty:
+        return None, "Файл пуст"
+
+    # 1. Ищем строку заголовка по трём маркерам
+    header_row = None
+    for i in range(min(15, len(df_raw))):
+        vals = [str(x).strip().lower() for x in df_raw.iloc[i].tolist()]
+        has_ticker = any("тикер" in v or "ticker" in v for v in vals)
+        has_price  = any("твх" in v or "средн" in v or "цена покупки" in v for v in vals)
+        has_qty    = any("лотов" in v or "кол-во" in v or "количество" in v for v in vals)
+        if has_ticker and (has_price or has_qty):
+            header_row = i
+            break
+
+    if header_row is None:
+        return None, "Не найдена строка заголовка. Ожидаются колонки «Тикер», «ТВХ», «Лотов»."
+
+    headers = [str(x).strip() for x in df_raw.iloc[header_row].tolist()]
+    data = df_raw.iloc[header_row + 1:].reset_index(drop=True)
+
+    def find_col(patterns):
+        for pat in patterns:
+            for i, h in enumerate(headers):
+                if pat in h.lower():
+                    return i
+        return None
+
+    tcol = find_col(["тикер", "ticker", "secid"])
+    vcol = find_col(["твх", "средняя цена", "цена покупки", "цена", "avg"])
+    qcol = find_col(["лотов", "лоты", "кол-во лотов", "qty", "quantity"])
+
+    if tcol is None:
+        return None, "Не найдена колонка «Тикер»."
+    if vcol is None:
+        return None, "Не найдена колонка «ТВХ» / «Средняя цена»."
+    if qcol is None:
+        return None, "Не найдена колонка «Лотов»."
+
+    valid = set(df_stocks["SECID"].tolist()) if df_stocks is not None and not df_stocks.empty else set()
+
+    positions = []
+    skipped = []
+    for _, row in data.iterrows():
+        ticker = str(row.iloc[tcol]).strip().upper()
+        if not ticker or ticker in ("NAN", "NONE", "-"):
+            continue
+        if not _TICKER_RE.match(ticker):
+            continue
+        if valid and ticker not in valid:
+            skipped.append(ticker)
+            continue
+        try:
+            tvh = float(row.iloc[vcol])
+            qty = int(float(row.iloc[qcol]))
+        except (TypeError, ValueError):
+            continue
+        if tvh <= 0 or qty <= 0:
+            continue
+        positions.append({"ticker": ticker, "tvh": tvh, "qty": qty})
+
+    if not positions:
+        return None, "Не найдено ни одной валидной позиции (Тикер в ISS + ТВХ>0 + Лотов>0)."
+
+    return positions, None
+
+
 # ============================================================
 # Сайдбар
 # ============================================================
@@ -242,11 +323,9 @@ with st.sidebar:
     st.divider()
     st.header("Импорт / Экспорт")
 
-    # 1. Импорт W-формаций
+    # ---------- 1. W-формации ----------
     w_file = st.file_uploader(
-        "Импорт W-формаций (Excel)",
-        type=["xlsx", "xls"],
-        key="upl_w",
+        "Импорт W-формаций (Excel)", type=["xlsx", "xls"], key="upl_w",
     )
     if w_file is not None:
         _h = _file_hash(w_file)
@@ -265,15 +344,13 @@ with st.sidebar:
                         "W-формации не изменены."
                     )
             except Exception as e:
-                st.error(f"Ошибка: {e}")
+                st.error(f"Ошибка W: {e}")
         else:
             st.caption("✓ W-формации уже загружены")
 
-    # 2. Импорт Источников (Арсагера + DSI)
+    # ---------- 2. Источники (Арсагера + DSI) ----------
     sources_file = st.file_uploader(
-        "Импорт Источников (Арсагера, DSI)",
-        type=["xlsx", "xls"],
-        key="upl_src",
+        "Импорт Источников (Арсагера, DSI)", type=["xlsx", "xls"], key="upl_src",
     )
     if sources_file is not None:
         _h = _file_hash(sources_file)
@@ -327,38 +404,31 @@ with st.sidebar:
         else:
             st.caption("✓ Источники уже загружены")
 
-    # 3. Портфель
+    # ---------- 3. Портфель ----------
     port_file = st.file_uploader(
-        "Импорт Портфеля (Excel)",
-        type=["xlsx", "xls"],
-        key="upl_port",
+        "Импорт Портфеля (Excel)", type=["xlsx", "xls"], key="upl_port",
     )
     if port_file is not None:
         _h = _file_hash(port_file)
         if st.session_state.get("_port_hash") != _h:
             try:
-                df_port = pd.read_excel(port_file)
-                state.set_global("portfolio_data", df_port.to_dict(orient="records"))
-                st.session_state["_port_hash"] = _h
-                st.success("Портфель загружен!")
-                state.autosave()
+                df_port = pd.read_excel(port_file, header=None)
+                positions, err = _parse_portfolio(df_port, df_stocks)
+                if err:
+                    st.error(f"Портфель: {err}")
+                else:
+                    fname = Path(port_file.name).stem
+                    state.set_global("portfolio_positions", positions)
+                    state.set_global("portfolio_name", fname)
+                    st.session_state["_port_hash"] = _h
+                    st.success(f"«{fname}» — {len(positions)} позиций")
+                    state.autosave()
             except Exception as e:
-                st.error(f"Ошибка: {e}")
+                st.error(f"Ошибка чтения портфеля: {e}")
         else:
             st.caption("✓ Портфель уже загружен")
 
-    # Сброс импортов — чтобы повторно прикрепить тот же файл
-    if st.button("🗑 Сбросить импорты", use_container_width=True):
-        for k in ("_w_hash", "_src_hash", "_port_hash"):
-            st.session_state.pop(k, None)
-        state.set_global("fundamental_data", {})
-        state.set_global("portfolio_data", [])
-        state.set_global("w_formations", DEFAULT_W_FORMATIONS)
-        state.autosave(force=True)
-        st.success("Импорты сброшены. Загрузите файлы заново.")
-        st.rerun()
-
-    # JSON экспорт / импорт
+    # ---------- JSON ----------
     if st.button("Подготовить экспорт JSON"):
         st.session_state["_export_blob"] = storage.dumps(S)
     blob = st.session_state.get("_export_blob")
@@ -370,7 +440,7 @@ with st.sidebar:
             mime="application/json",
         )
 
-    json_file = st.file_uploader("Импорт JSON (полный бэкап)", type=["json"])
+    json_file = st.file_uploader("Импорт JSON (полный бэкап)", type=["json"], key="upl_json")
     if json_file and st.button("Применить бэкап"):
         parsed = storage.loads(json_file.getvalue().decode("utf-8"))
         if parsed:
@@ -378,12 +448,36 @@ with st.sidebar:
             st.success("Загружено!")
             st.rerun()
 
+    # ---------- Сброс импортов ----------
+    if st.button("🗑 Сбросить импорты"):
+        for k in ("_w_hash", "_src_hash", "_port_hash"):
+            st.session_state.pop(k, None)
+        state.set_global("fundamental_data", {})
+        state.set_global("portfolio_positions", [])
+        state.set_global("portfolio_name", "Портфель")
+        from core.config import DEFAULT_W_FORMATIONS
+        state.set_global("w_formations", DEFAULT_W_FORMATIONS)
+        state.autosave(force=True)
+        st.success("Импорты сброшены.")
+        st.rerun()
+
+    # ---------- Диагностика ----------
+    with st.expander("🔍 Диагностика (state)", expanded=False):
+        fd = state.g("fundamental_data", {})
+        wf = state.g("w_formations", {})
+        pf = state.g("portfolio_positions", [])
+        st.caption(f"**fundamental_data**: {len(fd)} записей")
+        if fd:
+            st.json({k: fd[k] for k in list(fd)[:5]})
+        else:
+            st.warning("fundamental_data ПУСТ → Арсагера=0, DSI=0")
+        st.caption(f"**w_formations**: {len(wf)} записей | LKOH = {wf.get('LKOH', '—')}")
+        st.caption(f"**portfolio_positions**: {len(pf)} позиций")
+
 
 # ============================================================
-# Вкладки
+# Основные вкладки
 # ============================================================
-df_stocks = fetch_moex_stocks()
-
 tab_market, tab_rating, tab_indices, tab_portfolio, tab_calc = st.tabs([
     "Обзор", "Рейтинг", "Индексы", "Портфель", "Калькулятор"
 ])
