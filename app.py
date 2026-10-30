@@ -142,34 +142,24 @@ def _parse_w_any(xls: pd.ExcelFile) -> dict:
     return result
 
 def _parse_portfolio_any(df_raw: pd.DataFrame) -> list[dict]:
-    """Ищет нужные колонки и возвращает чистый список [{Тикер, ТВХ, Лотов}]."""
     if df_raw is None or df_raw.empty: return []
-    
-    # Нормализуем заголовки
     cols = {str(c).strip().lower(): c for c in df_raw.columns}
-    
     t_col = next((c for k, c in cols.items() if 'тикер' in k), None)
     p_col = next((c for k, c in cols.items() if 'твх' in k or 'средн' in k or 'цена входа' in k or 'цена покупки' in k), None)
     q_col = next((c for k, c in cols.items() if 'колич' in k or 'лотов' in k), None)
     
-    if not all([t_col, p_col, q_col]):
-        return []
+    if not all([t_col, p_col, q_col]): return []
         
     records = []
     for _, r in df_raw.iterrows():
         t = str(r[t_col]).strip().upper()
-        if not _TICKER_RE.match(t) or t in {'ТИКЕР', 'TICKER', 'NAN'}:
-            continue
-            
+        if not _TICKER_RE.match(t) or t in {'ТИКЕР', 'TICKER', 'NAN'}: continue
         try:
             p = float(str(r[p_col]).replace(',', '.'))
             q = int(float(str(r[q_col]).replace(',', '.')))
-        except (ValueError, TypeError):
-            continue
-            
+        except (ValueError, TypeError): continue
         if p <= 0 or q <= 0: continue
         records.append({"Тикер": t, "ТВХ": p, "Лотов": q})
-        
     return records
 
 def _file_hash(f) -> str:
@@ -188,7 +178,6 @@ with st.sidebar:
     st.divider()
     st.header("Импорт / Экспорт")
 
-    # 1. W-формации
     w_file = st.file_uploader("Импорт W-формаций", type=["xlsx", "xls"], key="upl_w")
     if w_file is not None:
         _h = _file_hash(w_file)
@@ -205,7 +194,6 @@ with st.sidebar:
                     st.error("Не найдены направления.")
             except Exception as e: st.error(f"Ошибка: {e}")
 
-    # 2. Источники (Арсагера + DSI)
     sources_file = st.file_uploader("Импорт Источников", type=["xlsx", "xls"], key="upl_src")
     if sources_file is not None:
         _h = _file_hash(sources_file)
@@ -229,7 +217,6 @@ with st.sidebar:
                     st.error("Загружено 0 записей.")
             except Exception as e: st.error(f"Ошибка: {e}")
 
-    # 3. Портфель
     port_file = st.file_uploader("Импорт Портфеля (Excel)", type=["xlsx", "xls"], key="upl_port")
     if port_file is not None:
         _h = _file_hash(port_file)
@@ -259,7 +246,15 @@ with st.sidebar:
             state.replace_state(parsed)
             st.success("Загружено!"); st.rerun()
 
-df_stocks = fetch_moex_stocks()
+# ============================================================
+# Загрузка данных (с защитой от зависания)
+# ============================================================
+with st.spinner("Загрузка данных с MOEX..."):
+    df_stocks = fetch_moex_stocks()
+
+if df_stocks.empty:
+    st.error("⚠️ Не удалось загрузить данные с MOEX ISS. Проверьте соединение или обновите страницу.")
+    st.stop()
 
 # ============================================================
 # Вкладки
