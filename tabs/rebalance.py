@@ -6,7 +6,7 @@ from core.ranking import calc_ranking
 
 def render_rebalance():
     st.subheader("Ребалансировка портфеля")
-    st.markdown("Распределение капитала по секторам и активам на основе их рейтинговых баллов.")
+    st.markdown("Распределение целевого капитала по секторам и активам на основе их рейтинговых баллов.")
 
     df_stocks = fetch_moex_stocks()
     df_indices = fetch_moex_indices()
@@ -17,7 +17,6 @@ def render_rebalance():
     df_stocks = df_stocks[df_stocks["PRICE"] > 0].copy()
     extreme_date = state.g("extreme_date")
 
-    # --- Загружаем рейтинги (с кэшированием для скорости) ---
     with st.spinner("Расчет баллов акций..."):
         imoex_ext, _ = fetch_extreme_close("IMOEX", extreme_date, market="index")
         imoex_row = df_indices[df_indices['SECID'] == 'IMOEX']
@@ -27,7 +26,6 @@ def render_rebalance():
         cb_rate = state.g("cb_rate")
         
         df_ranked = calc_ranking(df_stocks, w_forms, cb_rate, extreme_date, imoex_ext, imoex_curr)
-        # Словарь {тикер: балл}
         score_map = dict(zip(df_ranked["SECID"], df_ranked["total_score"]))
         name_map = dict(zip(df_ranked["SECID"], df_ranked["SHORTNAME"]))
 
@@ -36,7 +34,6 @@ def render_rebalance():
     # ============================================================
     st.markdown("### 1. Настройка секторов")
     
-    # Дефолтные секторы (как на вашем скриншоте)
     if "rebal_sectors" not in st.session_state:
         st.session_state["rebal_sectors"] = pd.DataFrame([
             {"Сектор": "Нефтегаз", "Доля, %": 35},
@@ -78,8 +75,7 @@ def render_rebalance():
         sector = row["Сектор"]
         pct = row["Доля, %"]
         
-        if not sector:
-            continue
+        if not sector: continue
             
         st.markdown(f"**{sector}** (Бюджет: {(deposit * pct / 100):,.0f} ₽)".replace(",", " "))
         
@@ -103,28 +99,22 @@ def render_rebalance():
     for _, row in edited_sectors.iterrows():
         sector = row["Сектор"]
         pct = row["Доля, %"]
-        if not sector:
-            continue
+        if not sector: continue
             
         tickers = st.session_state["rebal_tickers"].get(sector, [])
-        if not tickers:
-            continue
+        if not tickers: continue
             
         sector_budget = deposit * (pct / 100)
-        
-        # Считаем сумму баллов в секторе
         sector_scores = {t: score_map.get(t, 0) for t in tickers}
         total_sector_score = sum(sector_scores.values())
         
         for t in tickers:
             score = sector_scores[t]
             
-            # Распределяем бюджет пропорционально баллам
             if total_sector_score > 0:
                 planned_amount = sector_budget * (score / total_sector_score)
                 share_in_sector = (score / total_sector_score) * 100
             else:
-                # Если у всех баллов 0, делим поровну
                 planned_amount = sector_budget / len(tickers)
                 share_in_sector = 100 / len(tickers)
                 
@@ -146,10 +136,8 @@ def render_rebalance():
 
     df_result = pd.DataFrame(table_rows)
     
-    # Стилизация таблицы (как на скриншоте)
     def style_row(row):
         styles = [""] * len(row)
-        # Подсвечиваем нулевые баллы красным
         if row["Балл"] == 0:
             styles[3] = "background-color: #F44336; color: white;"
         else:
@@ -174,6 +162,5 @@ def render_rebalance():
         height=40 + 35 * len(df_result) + 6
     )
     
-    # Итоговая строка
     total_planned = df_result["Планируемая сумма, ₽"].sum()
     st.markdown(f"**Итого распределено:** {total_planned:,.0f} ₽ из {deposit:,.0f} ₽".replace(",", " "))
