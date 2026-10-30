@@ -12,7 +12,7 @@ from tabs.indices import render_indices
 from tabs.rating import render_rating
 from tabs.portfolio import render_portfolio
 from tabs.trade_planner import render_trade_planner
-from tabs.rebalance import render_rebalance  # <--- НОВЫЙ ИМПОРТ
+from tabs.rebalance import render_rebalance
 from ui.theme import inject_css, seg
 
 st.set_page_config(page_title=APP_TITLE, layout="wide", initial_sidebar_state="expanded")
@@ -34,7 +34,7 @@ def _sync_extreme():
 
 
 # ============================================================
-# Excel-парсеры (внутренние)
+# Excel-парсеры
 # ============================================================
 _TICKER_RE = re.compile(r'^[A-ZА-Я0-9]{1,10}$')
 
@@ -45,159 +45,132 @@ _W_ALIASES = {
 }
 
 def _norm(text) -> str:
-    if pd.isna(text):
-        return ""
+    if pd.isna(text): return ""
     return re.sub(r'[^\wа-яё]', '', str(text).strip().lower(), flags=re.IGNORECASE)
 
 def _split_class(raw) -> tuple[str, str]:
-    if pd.isna(raw):
-        return "", "common"
+    if pd.isna(raw): return "", "common"
     s_raw = str(raw).strip().lower()
     s_norm = _norm(s_raw)
-    if not s_norm:
-        return "", "common"
+    if not s_norm: return "", "common"
     for pat in ('-pref', ' pref', '-ап', ', ап', ' ап', '-п', ' п'):
         if s_raw.endswith(pat) and len(s_raw) > len(pat):
             m = _norm(pat)
-            if m and s_norm.endswith(m):
-                return s_norm[:-len(m)], 'preferred'
+            if m and s_norm.endswith(m): return s_norm[:-len(m)], 'preferred'
             return s_norm, 'preferred'
     for pat in ('-ord', ' ord', '-ао', ' ао', '-ao', ' ao'):
         if s_raw.endswith(pat) and len(s_raw) > len(pat):
             m = _norm(pat)
-            if m and s_norm.endswith(m):
-                return s_norm[:-len(m)], 'common'
+            if m and s_norm.endswith(m): return s_norm[:-len(m)], 'common'
             return s_norm, 'common'
     return s_norm, 'common'
 
 def _lookup_ticker(name, name_index: dict):
     base, cls = _split_class(name)
-    if not base:
-        return None
+    if not base: return None
     t = name_index.get((base, cls))
-    if t:
-        return t
+    if t: return t
     best, best_len = None, 0
     for (nb, nc), ticker in name_index.items():
-        if nc != cls or not nb:
-            continue
+        if nc != cls or not nb: continue
         if nb.startswith(base) or base.startswith(nb):
             overlap = min(len(nb), len(base))
             if overlap >= 4 and overlap > best_len:
                 best, best_len = ticker, overlap
-    if best:
-        return best
+    if best: return best
     for (nb, nc), ticker in name_index.items():
-        if nc != cls or not nb:
-            continue
+        if nc != cls or not nb: continue
         if (base in nb or nb in base) and min(len(base), len(nb)) >= 3:
             return ticker
     return None
 
 def _parse_arsagera(df_ars) -> tuple[dict, dict]:
     ars_dict, name_index = {}, {}
-    if df_ars is None or df_ars.empty:
-        return ars_dict, name_index
+    if df_ars is None or df_ars.empty: return ars_dict, name_index
     for group_num, start_col in enumerate([0, 5, 10, 15], start=1):
-        if start_col >= df_ars.shape[1]:
-            continue
+        if start_col >= df_ars.shape[1]: continue
         for i in range(2, len(df_ars)):
             t_raw = df_ars.iloc[i, start_col] if start_col < df_ars.shape[1] else None
             n_raw = df_ars.iloc[i, start_col + 1] if start_col + 1 < df_ars.shape[1] else None
-            if pd.isna(t_raw) or pd.isna(n_raw):
-                continue
+            if pd.isna(t_raw) or pd.isna(n_raw): continue
             ticker = str(t_raw).strip().upper()
-            if not _TICKER_RE.match(ticker) or ticker in {'ТИКЕР', 'TICKER'}:
-                continue
+            if not _TICKER_RE.match(ticker) or ticker in {'ТИКЕР', 'TICKER'}: continue
             name = str(n_raw).strip()
-            if not name:
-                continue
-            if ticker not in ars_dict:
-                ars_dict[ticker] = group_num
+            if not name: continue
+            if ticker not in ars_dict: ars_dict[ticker] = group_num
             base, cls = _split_class(name)
-            if base:
-                name_index.setdefault((base, cls), ticker)
+            if base: name_index.setdefault((base, cls), ticker)
     return ars_dict, name_index
 
 def _parse_dsi(df_dsi, name_index: dict) -> dict:
     dsi_dict = {}
-    if df_dsi is None or df_dsi.empty:
-        return dsi_dict
+    if df_dsi is None or df_dsi.empty: return dsi_dict
     col_name = next((c for c in df_dsi.columns if 'Акция' in str(c)), None)
     col_dsi = next((c for c in df_dsi.columns if 'DSI' in str(c)), None)
-    if not col_name or not col_dsi:
-        return dsi_dict
+    if not col_name or not col_dsi: return dsi_dict
     for _, row in df_dsi.iterrows():
         name = row[col_name]
         dsi_val = row[col_dsi]
-        if pd.isna(name) or pd.isna(dsi_val):
-            continue
+        if pd.isna(name) or pd.isna(dsi_val): continue
         ticker = _lookup_ticker(name, name_index)
         if ticker and ticker not in dsi_dict:
-            try:
-                dsi_dict[ticker] = float(dsi_val)
-            except (TypeError, ValueError):
-                continue
+            try: dsi_dict[ticker] = float(dsi_val)
+            except (TypeError, ValueError): continue
     return dsi_dict
 
-def _parse_w_df(df_w) -> dict:
-    result = {}
-    if df_w is None or df_w.empty:
-        return result
-    direction_col = None
-    for col in df_w.columns:
-        vals = df_w[col].dropna().astype(str).str.lower().str.strip()
+def _parse_w_any(xls: pd.ExcelFile) -> dict:
+    if 'W-формации' not in xls.sheet_names:
+        return {}
+    df_w = pd.read_excel(xls, sheet_name='W-формации', header=None)
+    direction_idx = None
+    for i in range(df_w.shape[1]):
+        vals = df_w.iloc[:, i].dropna().astype(str).str.lower().str.strip()
         if vals.isin(set(_W_ALIASES.keys())).any():
-            direction_col = col
+            direction_idx = i
             break
-    if direction_col is None:
-        return result
-    ticker_col = next(
-        (c for c in df_w.columns if 'тикер' in str(c).lower() or 'ticker' in str(c).lower()),
-        df_w.columns[0],
-    )
-    if ticker_col == direction_col:
-        ticker_col = df_w.columns[1] if len(df_w.columns) > 1 else df_w.columns[0]
+    if direction_idx is None: return {}
+    ticker_idx = 0 if direction_idx != 0 else 1
+    result = {}
     for _, row in df_w.iterrows():
-        t_raw = row[ticker_col]
-        d_raw = row[direction_col]
-        if pd.isna(t_raw) or pd.isna(d_raw):
-            continue
+        t_raw = row.iloc[ticker_idx] if ticker_idx < len(row) else None
+        d_raw = row.iloc[direction_idx] if direction_idx < len(row) else None
+        if pd.isna(t_raw) or pd.isna(d_raw): continue
         ticker = str(t_raw).strip().upper()
-        if not _TICKER_RE.match(ticker) or ticker in {'ТИКЕР', 'TICKER'}:
-            continue
+        if not _TICKER_RE.match(ticker) or ticker in {'ТИКЕР', 'TICKER'}: continue
         direction = str(d_raw).strip().lower()
-        if direction in _W_ALIASES:
-            result[ticker] = _W_ALIASES[direction]
+        if direction in _W_ALIASES: result[ticker] = _W_ALIASES[direction]
     return result
 
-def _parse_w_any(xls: pd.ExcelFile) -> dict:
-    if 'W-формации' in xls.sheet_names:
-        df_w = pd.read_excel(xls, sheet_name='W-формации', header=None)
-        direction_idx = None
-        for i in range(df_w.shape[1]):
-            vals = df_w.iloc[:, i].dropna().astype(str).str.lower().str.strip()
-            if vals.isin(set(_W_ALIASES.keys())).any():
-                direction_idx = i
-                break
-        if direction_idx is None:
-            return {}
-        ticker_idx = 0 if direction_idx != 0 else 1
-        result = {}
-        for _, row in df_w.iterrows():
-            t_raw = row.iloc[ticker_idx] if ticker_idx < len(row) else None
-            d_raw = row.iloc[direction_idx] if direction_idx < len(row) else None
-            if pd.isna(t_raw) or pd.isna(d_raw):
-                continue
-            ticker = str(t_raw).strip().upper()
-            if not _TICKER_RE.match(ticker) or ticker in {'ТИКЕР', 'TICKER'}:
-                continue
-            direction = str(d_raw).strip().lower()
-            if direction in _W_ALIASES:
-                result[ticker] = _W_ALIASES[direction]
-        return result
-    df_w = pd.read_excel(xls, sheet_name=0)
-    return _parse_w_df(df_w)
+def _parse_portfolio_any(df_raw: pd.DataFrame) -> list[dict]:
+    """Ищет нужные колонки и возвращает чистый список [{Тикер, ТВХ, Лотов}]."""
+    if df_raw is None or df_raw.empty: return []
+    
+    # Нормализуем заголовки
+    cols = {str(c).strip().lower(): c for c in df_raw.columns}
+    
+    t_col = next((c for k, c in cols.items() if 'тикер' in k), None)
+    p_col = next((c for k, c in cols.items() if 'твх' in k or 'средн' in k or 'цена входа' in k or 'цена покупки' in k), None)
+    q_col = next((c for k, c in cols.items() if 'колич' in k or 'лотов' in k), None)
+    
+    if not all([t_col, p_col, q_col]):
+        return []
+        
+    records = []
+    for _, r in df_raw.iterrows():
+        t = str(r[t_col]).strip().upper()
+        if not _TICKER_RE.match(t) or t in {'ТИКЕР', 'TICKER', 'NAN'}:
+            continue
+            
+        try:
+            p = float(str(r[p_col]).replace(',', '.'))
+            q = int(float(str(r[q_col]).replace(',', '.')))
+        except (ValueError, TypeError):
+            continue
+            
+        if p <= 0 or q <= 0: continue
+        records.append({"Тикер": t, "ТВХ": p, "Лотов": q})
+        
+    return records
 
 def _file_hash(f) -> str:
     return hashlib.md5(f.getvalue()).hexdigest()
@@ -215,8 +188,8 @@ with st.sidebar:
     st.divider()
     st.header("Импорт / Экспорт")
 
-    # 1. Импорт W-формаций
-    w_file = st.file_uploader("Импорт W-формаций (Excel)", type=["xlsx", "xls"], key="upl_w")
+    # 1. W-формации
+    w_file = st.file_uploader("Импорт W-формаций", type=["xlsx", "xls"], key="upl_w")
     if w_file is not None:
         _h = _file_hash(w_file)
         if st.session_state.get("_w_hash") != _h:
@@ -226,17 +199,14 @@ with st.sidebar:
                 if new_w:
                     state.set_global("w_formations", new_w)
                     st.session_state["_w_hash"] = _h
-                    st.success(f"W-формации загружены: {len(new_w)} тикеров")
+                    st.success(f"W-формации загружены: {len(new_w)}")
                     state.autosave()
                 else:
-                    st.error("Не найдены направления (вверх/вниз/рейндж). W-формации не изменены.")
-            except Exception as e:
-                st.error(f"Ошибка: {e}")
-        else:
-            st.caption("✓ W-формации уже загружены")
+                    st.error("Не найдены направления.")
+            except Exception as e: st.error(f"Ошибка: {e}")
 
-    # 2. Импорт Источников
-    sources_file = st.file_uploader("Импорт Источников (Арсагера, DSI)", type=["xlsx", "xls"], key="upl_src")
+    # 2. Источники (Арсагера + DSI)
+    sources_file = st.file_uploader("Импорт Источников", type=["xlsx", "xls"], key="upl_src")
     if sources_file is not None:
         _h = _file_hash(sources_file)
         if st.session_state.get("_src_hash") != _h:
@@ -244,37 +214,20 @@ with st.sidebar:
                 xls = pd.ExcelFile(sources_file)
                 ars_dict, name_index = {}, {}
                 if 'Рейтинг арсагера' in xls.sheet_names:
-                    df_ars = pd.read_excel(xls, sheet_name='Рейтинг арсагера', header=None)
-                    ars_dict, name_index = _parse_arsagera(df_ars)
-
+                    ars_dict, name_index = _parse_arsagera(pd.read_excel(xls, sheet_name='Рейтинг арсагера', header=None))
                 dsi_dict = {}
                 if 'ДОХОД DSI' in xls.sheet_names:
-                    df_dsi = pd.read_excel(xls, sheet_name='ДОХОД DSI')
-                    dsi_dict = _parse_dsi(df_dsi, name_index)
-
-                if 'W-формации' in xls.sheet_names:
-                    w_dict = _parse_w_any(xls)
-                    if w_dict:
-                        state.set_global("w_formations", w_dict)
-                        st.info(f"Из Источников также загружены W-формации: {len(w_dict)}")
-
-                fund_data = {
-                    t: {"ars_group": ars_dict.get(t, 0), "dsi": dsi_dict.get(t, 0.0)}
-                    for t in set(ars_dict) | set(dsi_dict)
-                }
-
-                if not fund_data:
-                    st.error(f"Загружено 0 записей! Листы: {xls.sheet_names}. Арсагера={len(ars_dict)}, DSI={len(dsi_dict)}.")
-                else:
+                    dsi_dict = _parse_dsi(pd.read_excel(xls, sheet_name='ДОХОД DSI'), name_index)
+                
+                fund_data = {t: {"ars_group": ars_dict.get(t, 0), "dsi": dsi_dict.get(t, 0.0)} for t in set(ars_dict) | set(dsi_dict)}
+                if fund_data:
                     state.set_global("fundamental_data", fund_data)
                     st.session_state["_src_hash"] = _h
-                    st.success(f"Загружено {len(fund_data)} записей (Арсагера {len(ars_dict)} + DSI {len(dsi_dict)})")
-                    st.caption(f"LKOH → Арс={fund_data.get('LKOH', {}).get('ars_group')}, DSI={fund_data.get('LKOH', {}).get('dsi')}")
+                    st.success(f"Загружено {len(fund_data)} записей.")
                     state.autosave()
-            except Exception as e:
-                st.error(f"Ошибка чтения источников: {e}")
-        else:
-            st.caption("✓ Источники уже загружены")
+                else:
+                    st.error("Загружено 0 записей.")
+            except Exception as e: st.error(f"Ошибка: {e}")
 
     # 3. Портфель
     port_file = st.file_uploader("Импорт Портфеля (Excel)", type=["xlsx", "xls"], key="upl_port")
@@ -282,23 +235,24 @@ with st.sidebar:
         _h = _file_hash(port_file)
         if st.session_state.get("_port_hash") != _h:
             try:
-                df_port = pd.read_excel(port_file)
-                state.set_global("portfolio_data", df_port.to_dict(orient="records"))
-                st.session_state["_port_hash"] = _h
-                st.success("Портфель загружен!")
-                state.autosave()
-            except Exception as e:
-                st.error(f"Ошибка: {e}")
-        else:
-            st.caption("✓ Портфель уже загружен")
+                df_raw = pd.read_excel(port_file)
+                records = _parse_portfolio_any(df_raw)
+                if records:
+                    state.set_global("portfolio_data", records)
+                    st.session_state["_port_hash"] = _h
+                    st.success(f"Портфель загружен: {len(records)} позиций.")
+                    state.autosave()
+                else:
+                    st.error("Не найдены колонки Тикер / ТВХ / Лотов.")
+            except Exception as e: st.error(f"Ошибка: {e}")
 
     if st.button("Подготовить экспорт JSON"):
         st.session_state["_export_blob"] = storage.dumps(S)
     blob = st.session_state.get("_export_blob")
     if blob:
-        st.download_button("Скачать JSON", data=blob, file_name=f"backup_{datetime.now().strftime('%d_%m_%y')}.json", mime="application/json")
+        st.download_button("Скачать JSON", data=blob, file_name=f"backup.json", mime="application/json")
 
-    json_file = st.file_uploader("Импорт JSON (полный бэкап)", type=["json"])
+    json_file = st.file_uploader("Импорт JSON", type=["json"])
     if json_file and st.button("Применить бэкап"):
         parsed = storage.loads(json_file.getvalue().decode("utf-8"))
         if parsed:
@@ -316,23 +270,23 @@ tab_market, tab_rating, tab_indices, tab_portfolio, tab_rebalance, tab_calc = st
 
 with tab_market:
     try: render_main_tab(df_stocks=df_stocks, deposit=G["deposit"])
-    except Exception as e: st.error(f"Ошибка в 'Обзоре': {e}")
+    except Exception as e: st.error(f"Ошибка: {e}")
 
 with tab_rating:
     try: render_rating()
-    except Exception as e: st.error(f"Ошибка в 'Рейтинге': {e}")
+    except Exception as e: st.error(f"Ошибка: {e}")
 
 with tab_indices:
     try: render_indices()
-    except Exception as e: st.error(f"Ошибка в 'Индексах': {e}")
+    except Exception as e: st.error(f"Ошибка: {e}")
 
 with tab_portfolio:
     try: render_portfolio(df_stocks=df_stocks)
-    except Exception as e: st.error(f"Ошибка в 'Портфеле': {e}")
+    except Exception as e: st.error(f"Ошибка: {e}")
 
 with tab_rebalance:
     try: render_rebalance()
-    except Exception as e: st.error(f"Ошибка в 'Ребалансировке': {e}")
+    except Exception as e: st.error(f"Ошибка: {e}")
 
 with tab_calc:
     active_tickers = G.get("active_tickers", [])
@@ -342,6 +296,6 @@ with tab_calc:
         active = seg("Инструмент", active_tickers, key="plan_ticker", default=active_tickers[0])
         if not active or active not in active_tickers: active = active_tickers[0]
         try: render_trade_planner(active, df_stocks)
-        except Exception as e: st.error(f"Ошибка в 'Калькуляторе': {e}")
+        except Exception as e: st.error(f"Ошибка: {e}")
 
 state.autosave()
