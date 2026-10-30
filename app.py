@@ -1,174 +1,285 @@
+"""
+Калькулятор акций MOEX — точка входа Streamlit.
+Сайдбар: настройки + загрузка Источники.xlsx / Портфель.xlsx + импорт/экспорт JSON.
+Вкладки: Обзор, Рейтинг, Индексы, Портфель, Калькулятор, Справка.
+"""
 from __future__ import annotations
-import streamlit as st
-from datetime import datetime
-import pandas as pd
-import re
-from core import state, storage
-from core.config import APP_TITLE
-from core.market import fetch_moex_stocks
-from tabs.main_table import render_main_tab
-from tabs.indices import render_indices
-from tabs.rating import render_rating
-from tabs.portfolio import render_portfolio
-from tabs.trade_planner import render_trade_planner
-from ui.theme import inject_css, seg
 
-st.set_page_config(page_title=APP_TITLE, layout="wide", initial_sidebar_state="expanded")
+import inspect
+import json
+import os
+import tempfile
+from pathlib import Path
+
+import pandas as pd
+import streamlit as st
+
+# ---------- Внутренние модули ----------
+from core import config as cfg
+from core.parsers import load_sources
+from core.ranking import score_stock
+from core.storage import save_profile, load_profile  # если функции называются иначе — поправьте импорт
+
+from tabs import (
+    main_table,
+    rating,
+    indices,
+    portfolio,
+    trade_planner,
+    help as help_tab,
+)
+
+# ---------- Опционально: тема ----------
+try:
+    from ui.theme import inject_css
+except Exception:  # темы может не быть
+    def inject_css(*_a, **_kw):
+        pass
+
+
+# ============================================================
+# Настройки страницы
+# ============================================================
+st.set_page_config(
+    page_title="Калькулятор акций MOEX",
+    page_icon="📈",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 inject_css()
 
-S = state.get_state()
-G = S["global"]
 
-def _sync(key, gkey):
-    state.set_global(gkey, st.session_state[key])
+# ============================================================
+# Дефолтные настройки (подтягиваем из core/config.py, если есть)
+# ============================================================
+DEFAULTS = {
+    "cb_rate": getattr(cfg, "CB_RATE", 16.0),
+    "deposit": getattr(cfg, "DEPOSIT", 1_000_000.0),
+    "cash_reserve_pct": getattr(cfg, "CASH_RESERVE_PCT", 10.0),
+    "extremum_date": getattr(cfg, "EXTREMUM_DATE", "2024-05-20"),
+    "risk_per_trade_pct": getattr(cfg, "RISK_PER_TRADE_PCT", 2.0),
+}
 
-def _sync_extreme():
-    val = st.session_state.sb_extreme
-    try:
-        datetime.strptime(val, "%d.%m.%Y")
-        state.set_global("extreme_date", val)
-    except ValueError:
-        st.error("Неверный формат даты. Используйте DD.MM.YYYY")
 
+def _init_state() -> None:
+    st.session_state.setdefault("cfg", dict(DEFAULTS))
+    st.session_state.setdefault("sources", None)
+    st.session_state.setdefault("portfolio", None)
+    st.session_state.setdefault("portfolio_path", None)
+
+
+_init_state()
+
+
+# ============================================================
+# Сайдбар — настройки
+# ============================================================
 with st.sidebar:
-    st.header("Настройки")
-    st.text_input("Экстремум", value=G["extreme_date"], key="sb_extreme", on_change=_sync_extreme)
-    st.number_input("Ставка ЦБ, %", value=float(G["cb_rate"]), step=0.25, format="%.2f", key="sb_cb", on_change=_sync, args=("sb_cb", "cb_rate"))
-    st.number_input("Депозит, ₽", value=int(G["deposit"]), step=1000, key="sb_dep", on_change=_sync, args=("sb_dep", "deposit"))
-    st.number_input("Резерв кэша, %", value=float(G["cash_reserve"]), step=1.0, key="sb_cash", on_change=_sync, args=("sb_cash", "cash_reserve"))
+    st.title("⚙️ Настройки")
+
+    c = st.session_state["cfg"]
+
+    c["cb_rate"] = st.number_input(
+        "Ставка ЦБ, %", min_value=0.0, max_value=100.0,
+        value=float(c["cb_rate"]), step=0.25,
+    )
+    c["deposit"] = st.number_input(
+        "Депозит, ₽", min_value=0.0,
+        value=float(c["deposit"]), step=10_000.0, format="%.0f",
+    )
+    c["cash_reserve_pct"] = st.slider(
+        "Резерв кэша, %", 0, 100,
+        int(c["cash_reserve_pct"]),
+    )
+    c["risk_per_trade_pct"] = st.slider(
+        "Риск на сделку, %", 0.1, 10.0,
+        float(c["risk_per_trade_pct"]), step=0.1,
+    )
+    c["extremum_date"] = st.text_input(
+        "Дата экстремума (YYYY-MM-DD)", value=c["extremum_date"],
+    )
 
     st.divider()
-    st.header("Импорт / Экспорт")
-    
-    # 1. Импорт W-формаций (Excel)
-    w_file = st.file_uploader("Импорт W-формаций (Excel)", type=["xlsx", "xls"])
-    if w_file:
+
+    # ---------- Загрузка Источники.xlsx ----------
+    st.subheader("📥 Источники.xlsx")
+    uploaded_sources = st.file_uploader(
+        "Арсагера + DSI + W-формации",
+        type=["xlsx"], key="uploader_sources",
+        help="Один файл, до трёх листов: 'Рейтинг арсагера', 'ДОХОД DSI', 'W-формации'",
+    )
+    if uploaded_sources is not None:
+        # pandas не любит BytesIO при sheet_name + header=None в некоторых версиях — пишем во временный файл
+        tmp = Path(tempfile.gettempdir()) / "Источники.xlsx"
+        tmp.write_bytes(uploaded_sources.getbuffer())
         try:
-            df_w = pd.read_excel(w_file)
-            ticker_col = next((c for c in df_w.columns if 'Тикер' in str(c) or 'ticker' in str(c).lower()), df_w.columns[0])
-            form_col = next((c for c in df_w.columns if 'Формация' in str(c) or 'формация' in str(c).lower()), df_w.columns[1])
-            new_w = dict(zip(df_w[ticker_col].astype(str).str.strip().str.upper(), df_w[form_col]))
-            state.set_global("w_formations", new_w)
-            st.success("W-формации загружены!")
-            state.autosave()
-            st.rerun()
+            sources = load_sources(str(tmp))
+            st.session_state["sources"] = sources
+            st.success(
+                f"Загружено: Арсагера {len(sources['arsagera'])}, "
+                f"DSI {len(sources['dsi'])}, W {len(sources['w'])}"
+            )
+            if not sources["w"]:
+                st.warning("Лист «W-формации» не найден или пуст — W-баллы будут 0.")
         except Exception as e:
-            st.error(f"Ошибка: {e}")
+            st.error(f"Ошибка парсинга: {e}")
 
-    # 2. Импорт Источников (Арсагера + DSI)
-    sources_file = st.file_uploader("Импорт Источников (Арсагера, DSI)", type=["xlsx", "xls"])
-    if sources_file:
+    if st.session_state["sources"] is not None:
+        src = st.session_state["sources"]
+        with st.expander("Проверка парсинга", expanded=False):
+            for tk in ("LKOH", "SBER", "TATN", "GAZP"):
+                a = src["arsagera"].get(tk, {})
+                d = src["dsi"].get(tk)
+                w = src["w"].get(tk)
+                st.caption(
+                    f"{tk}: Арсагера={a.get('score', '—')} "
+                    f"({a.get('name', '—')}), DSI={d if d is not None else '—'}, W={w or '—'}"
+                )
+
+    st.divider()
+
+    # ---------- Загрузка Портфель.xlsx ----------
+    st.subheader("📥 Портфель.xlsx")
+    uploaded_portfolio = st.file_uploader(
+        "Текущие позиции", type=["xlsx"], key="uploader_portfolio",
+    )
+    if uploaded_portfolio is not None:
+        tmp_p = Path(tempfile.gettempdir()) / "Портфель.xlsx"
+        tmp_p.write_bytes(uploaded_portfolio.getbuffer())
         try:
-            xls = pd.ExcelFile(sources_file)
-            
-            # Парсинг Арсагеры (горизонтальные блоки)
-            ars_dict = {}
-            name_to_ticker = {}
-            if 'Рейтинг арсагера' in xls.sheet_names:
-                df_ars = pd.read_excel(xls, sheet_name='Рейтинг арсагера', header=None)
-                # Блоки начинаются с колонок 0, 5, 10, 15
-                for start_col in [0, 5, 10, 15]:
-                    for i in range(2, len(df_ars)): # Данные со 3-й строки (индекс 2)
-                        ticker = df_ars.iloc[i, start_col]
-                        name = df_ars.iloc[i, start_col + 1]
-                        rank = df_ars.iloc[i, start_col + 3]
-                        
-                        if pd.notna(ticker) and pd.notna(rank):
-                            t_str = str(ticker).strip().upper()
-                            try:
-                                ars_dict[t_str] = int(rank)
-                            except ValueError:
-                                pass
-                        if pd.notna(name) and pd.notna(ticker):
-                            name_to_ticker[str(name).strip()] = str(ticker).strip().upper()
+            df = pd.read_excel(str(tmp_p))
+            st.session_state["portfolio"] = df
+            st.session_state["portfolio_path"] = str(tmp_p)
+            st.success(f"Портфель: {len(df)} позиций")
+        except Exception as e:
+            st.error(f"Ошибка чтения портфеля: {e}")
 
-            # Парсинг DSI
-            dsi_dict = {}
-            if 'ДОХОД DSI' in xls.sheet_names:
-                df_dsi = pd.read_excel(xls, sheet_name='ДОХОД DSI')
-                # Ищем нужные колонки
-                col_name = next((c for c in df_dsi.columns if 'Акция' in str(c)), None)
-                col_dsi = next((c for c in df_dsi.columns if 'DSI' in str(c)), None)
-                
-                if col_name and col_dsi:
-                    for _, row in df_dsi.iterrows():
-                        name = str(row[col_name]).strip()
-                        dsi_val = row[col_dsi]
-                        if pd.notna(dsi_val):
-                            ticker = name_to_ticker.get(name)
-                            if ticker:
-                                dsi_dict[ticker] = float(dsi_val)
-            
-            # Собираем все вместе
-            fund_data = {}
-            for t in set(list(ars_dict.keys()) + list(dsi_dict.keys())):
-                fund_data[t] = {
-                    "ars_group": ars_dict.get(t, 0),
-                    "dsi": dsi_dict.get(t, 0.0)
+    st.divider()
+
+    # ---------- JSON ----------
+    st.subheader("💾 Профиль (JSON)")
+    col_a, col_b = st.columns(2)
+    with col_a:
+        if st.button("📤 Экспорт", use_container_width=True):
+            try:
+                payload = {
+                    "cfg": st.session_state["cfg"],
+                    "portfolio": (
+                        st.session_state["portfolio"].to_dict(orient="records")
+                        if st.session_state.get("portfolio") is not None else []
+                    ),
                 }
-            
-            state.set_global("fundamental_data", fund_data)
-            st.success(f"Загружено {len(fund_data)} записей (Арсагера + DSI)")
-            state.autosave()
-            st.rerun()
-        except Exception as e:
-            st.error(f"Ошибка чтения источников: {e}")
+                st.download_button(
+                    "Скачать JSON",
+                    data=json.dumps(payload, ensure_ascii=False, indent=2, default=str),
+                    file_name="profile.json",
+                    mime="application/json",
+                    use_container_width=True,
+                )
+            except Exception as e:
+                st.error(f"Экспорт: {e}")
+    with col_b:
+        uploaded_json = st.file_uploader("JSON", type=["json"], key="uploader_json", label_visibility="collapsed")
+        if uploaded_json is not None:
+            try:
+                payload = json.loads(uploaded_json.getvalue().decode("utf-8"))
+                if "cfg" in payload:
+                    st.session_state["cfg"].update(payload["cfg"])
+                if payload.get("portfolio"):
+                    st.session_state["portfolio"] = pd.DataFrame(payload["portfolio"])
+                st.success("Профиль загружен.")
+            except Exception as e:
+                st.error(f"Импорт: {e}")
 
-    # 3. Портфель (Excel)
-    port_file = st.file_uploader("Импорт Портфеля (Excel)", type=["xlsx", "xls"])
-    if port_file:
-        try:
-            df_port = pd.read_excel(port_file)
-            state.set_global("portfolio_data", df_port.to_dict(orient="records"))
-            st.success("Портфель загружен!")
-            state.autosave()
-            st.rerun()
-        except Exception as e:
-            st.error(f"Ошибка: {e}")
 
-    if st.button("Подготовить экспорт JSON"):
-        st.session_state["_export_blob"] = storage.dumps(S)
-    blob = st.session_state.get("_export_blob")
-    if blob:
-        st.download_button("Скачать JSON", data=blob, file_name=f"backup_{datetime.now().strftime('%d_%m_%y')}.json", mime="application/json")
+# ============================================================
+# Безопасный вызов render() у вкладки
+# ============================================================
+def _render_tab(mod, **ctx):
+    """
+    Вызывает mod.render(**ctx), передавая только те kwargs,
+    которые реально есть в сигнатуре render(). Позволяет
+    вкладкам иметь разные сигнатуры без падений.
+    """
+    fn = getattr(mod, "render", None)
+    if fn is None:
+        st.warning(f"В модуле {mod.__name__} нет функции render().")
+        return
+    params = inspect.signature(fn).parameters
+    accepts_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
+    if accepts_kwargs:
+        fn(**ctx)
+    else:
+        fn(**{k: v for k, v in ctx.items() if k in params})
 
-    json_file = st.file_uploader("Импорт JSON (полный бэкап)", type=["json"])
-    if json_file and st.button("Применить бэкап"):
-        parsed = storage.loads(json_file.getvalue().decode("utf-8"))
-        if parsed:
-            state.replace_state(parsed)
-            st.success("Загружено!"); st.rerun()
 
-df_stocks = fetch_moex_stocks()
+# ============================================================
+# Основные вкладки
+# ============================================================
+sources = st.session_state.get("sources")
+portfolio_df = st.session_state.get("portfolio")
+app_cfg = st.session_state["cfg"]
 
-tab_market, tab_rating, tab_indices, tab_portfolio, tab_calc = st.tabs([
-    "Обзор", "Рейтинг", "Индексы", "Портфель", "Калькулятор"
-])
+# Предрасчёт рейтинга (если есть sources)
+rating_rows = []
+if sources:
+    try:
+        # market-данные вкладки rating.py получат сами; здесь только «сырые» sources,
+        # чтобы вкладка могла отрисовать таблицу даже без рейтинга.
+        rating_rows = [
+            {"ticker": tk, **info, "dsi": sources["dsi"].get(tk),
+             "w": sources["w"].get(tk)}
+            for tk, info in sources["arsagera"].items()
+        ]
+    except Exception as e:
+        st.error(f"Ошибка подготовки rating_rows: {e}")
 
-with tab_market:
-    try: render_main_tab(df_stocks=df_stocks, deposit=G["deposit"])
-    except Exception as e: st.error(f"Ошибка в 'Обзоре': {e}")
+tab_overview, tab_rating, tab_indices, tab_portfolio, tab_calc, tab_help = st.tabs(
+    ["📊 Обзор", "🏆 Рейтинг", "🌐 Индексы", "💼 Портфель", "🧮 Калькулятор", "❓ Справка"]
+)
+
+with tab_overview:
+    _render_tab(
+        main_table,
+        sources=sources,
+        portfolio=portfolio_df,
+        cfg=app_cfg,
+        rating_rows=rating_rows,
+    )
 
 with tab_rating:
-    try: render_rating()
-    except Exception as e: st.error(f"Ошибка в 'Рейтинге': {e}")
+    _render_tab(
+        rating,
+        sources=sources,
+        portfolio=portfolio_df,
+        cfg=app_cfg,
+        rating_rows=rating_rows,
+        score_stock=score_stock,
+    )
 
 with tab_indices:
-    try: render_indices()
-    except Exception as e: st.error(f"Ошибка в 'Индексах': {e}")
+    _render_tab(
+        indices,
+        sources=sources,
+        cfg=app_cfg,
+    )
 
 with tab_portfolio:
-    try: render_portfolio(df_stocks=df_stocks)
-    except Exception as e: st.error(f"Ошибка в 'Портфеле': {e}")
+    _render_tab(
+        portfolio,
+        portfolio=portfolio_df,
+        portfolio_path=st.session_state.get("portfolio_path"),
+        sources=sources,
+        cfg=app_cfg,
+    )
 
 with tab_calc:
-    active_tickers = G.get("active_tickers", [])
-    if not active_tickers:
-        st.info("Выберите тикер на вкладке 'Обзор'.")
-    else:
-        active = seg("Инструмент", active_tickers, key="plan_ticker", default=active_tickers[0])
-        if not active or active not in active_tickers: active = active_tickers[0]
-        try: render_trade_planner(active, df_stocks)
-        except Exception as e: st.error(f"Ошибка в 'Калькуляторе': {e}")
+    _render_tab(
+        trade_planner,
+        sources=sources,
+        portfolio=portfolio_df,
+        cfg=app_cfg,
+    )
 
-state.autosave()
+with tab_help:
+    _render_tab(help_tab)
