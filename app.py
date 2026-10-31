@@ -4,7 +4,6 @@ from datetime import datetime
 import pandas as pd
 import re
 import hashlib
-from pathlib import Path
 from core import state, storage
 from core.config import APP_TITLE
 from core.market import fetch_moex_stocks
@@ -124,60 +123,45 @@ def _parse_dsi(df_dsi, name_index: dict) -> dict:
     return dsi_dict
 
 def _parse_w_any(xls: pd.ExcelFile) -> dict:
-    # 1. Ищем лист 'W-формации'. Если нет - берем первый попавшийся.
     sheet_name = 'W-формации' if 'W-формации' in xls.sheet_names else xls.sheet_names[0]
     df_w = pd.read_excel(xls, sheet_name=sheet_name, header=None)
-    
-    # 2. Ищем колонку с направлениями
     direction_idx = None
     for i in range(df_w.shape[1]):
         vals = df_w.iloc[:, i].dropna().astype(str).str.lower().str.strip()
         if vals.isin(set(_W_ALIASES.keys())).any():
             direction_idx = i
             break
-            
-    if direction_idx is None: 
-        return {}
-        
-    # 3. Ищем колонку с тикерами (проверяем слева и справа от направлений)
+    if direction_idx is None: return {}
     ticker_idx = -1
     if direction_idx > 0:
         left_col = df_w.iloc[:, direction_idx - 1].dropna().astype(str)
         if left_col.str.match(r'^[A-ZА-Я0-9]{2,10}$', na=False).any():
             ticker_idx = direction_idx - 1
-            
     if ticker_idx == -1 and direction_idx < df_w.shape[1] - 1:
         right_col = df_w.iloc[:, direction_idx + 1].dropna().astype(str)
         if right_col.str.match(r'^[A-ZА-Я0-9]{2,10}$', na=False).any():
             ticker_idx = direction_idx + 1
-
-    if ticker_idx == -1:
-        return {}
-        
+    if ticker_idx == -1: return {}
     result = {}
     for _, row in df_w.iterrows():
         t_raw = row.iloc[ticker_idx]
         d_raw = row.iloc[direction_idx]
         if pd.isna(t_raw) or pd.isna(d_raw): continue
-        
         ticker = str(t_raw).strip().upper()
         if not _TICKER_RE.match(ticker) or ticker in {'ТИКЕР', 'TICKER'}: continue
-        
         direction = str(d_raw).strip().lower()
-        if direction in _W_ALIASES: 
-            result[ticker] = _W_ALIASES[direction]
-            
+        if direction in _W_ALIASES: result[ticker] = _W_ALIASES[direction]
     return result
 
-def _parse_portfolio_any(df_raw: pd.DataFrame) -> list[dict]:
-    if df_raw is None or df_raw.empty: return []
+def _parse_portfolio_any(df_raw: pd.DataFrame) -> tuple[list[dict], float]:
+    if df_raw is None or df_raw.empty: return [], 0.0
     
     cols = {str(c).strip().lower(): c for c in df_raw.columns}
     t_col = next((c for k, c in cols.items() if 'тикер' in k), None)
     p_col = next((c for k, c in cols.items() if 'твх' in k or 'средн' in k or 'цена входа' in k), None)
     q_col = next((c for k, c in cols.items() if 'колич' in k or 'лотов' in k), None)
     
-    if not all([t_col, p_col, q_col]): return []
+    if not all([t_col, p_col, q_col]): return [], 0.0
         
     records = []
     for _, r in df_raw.iterrows():
@@ -189,7 +173,22 @@ def _parse_portfolio_any(df_raw: pd.DataFrame) -> list[dict]:
         except (ValueError, TypeError): continue
         if p <= 0 or q <= 0: continue
         records.append({"Тикер": t, "ТВХ": p, "Лотов": q})
-    return records
+        
+    # Ищем кеш
+    cash_val = 0.0
+    for _, row in df_raw.iterrows():
+        row_str = [str(x).strip().lower() for x in row.values]
+        if any(s == "рубли" or "кеш" in s or "cash" in s for s in row_str):
+            for cell in row.values:
+                try:
+                    val = float(str(cell).replace(',', '.'))
+                    if val >= 0:
+                        cash_val = val
+                        break
+                except (ValueError, TypeError):
+                    continue
+                    
+    return records, cash_val
 
 # ============================================================
 # Сайдбар
@@ -198,7 +197,7 @@ with st.sidebar:
     st.header("Настройки")
     st.text_input("Экстремум", value=G["extreme_date"], key="sb_extreme", on_change=_sync_extreme)
     st.number_input("Ставка ЦБ, %", value=float(G["cb_rate"]), step=0.25, format="%.2f", key="sb_cb", on_change=_sync, args=("sb_cb", "cb_rate"))
-    st.number_input("Депозит, ₽", value=int(G["deposit"]), step=1000, key="sb_dep", on_change=_sync, args=("sb_dep", "deposit"))
+    # Депозит убран из сайдбара по просьбе
     st.number_input("Резерв кэша, %", value=float(G["cash_reserve"]), step=1.0, key="sb_cash", on_change=_sync, args=("sb_cash", "cash_reserve"))
 
     st.divider()
@@ -252,11 +251,13 @@ with st.sidebar:
         if st.session_state.get("_port_hash") != _h:
             try:
                 df_raw = pd.read_excel(port_file)
-                records = _parse_portfolio_any(df_raw)
+                records, cash = _parse_portfolio_any(df_raw)
                 if records:
                     state.set_global("portfolio_data", records)
+                    state.set_global("portfolio_cash_file", cash)
+                    state.set_global("portfolio_cash", cash) # Перезаписываем UI кеш при новой загрузке
                     st.session_state["_port_hash"] = _h
-                    st.success(f"Портфель загружен: {len(records)} позиций.")
+                    st.success(f"Портфель загружен: {len(records)} позиций, кеш {cash:,.0f} ₽")
                     state.autosave()
                 else:
                     st.error("Не найдены колонки Тикер / ТВХ / Лотов.")
@@ -283,7 +284,7 @@ tab_market, tab_rating, tab_indices, tab_portfolio, tab_rebalance, tab_calc = st
 ])
 
 with tab_market:
-    try: render_main_tab(df_stocks=df_stocks, deposit=G["deposit"])
+    try: render_main_tab(df_stocks=df_stocks, deposit=state.g("portfolio_cash", 0))
     except Exception as e: st.error(f"Ошибка: {e}")
 
 with tab_rating:
