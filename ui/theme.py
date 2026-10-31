@@ -30,6 +30,31 @@ CSS = """
 
   div[data-testid="stPlotlyChart"]{background:#FFFFFF;border-radius:10px;}
 
+  /* --- Скрываем текст в загрузчике файлов, оставляем только кнопку --- */
+  [data-testid="stFileUploaderDropzoneInstructions"] {
+      display: none !important;
+  }
+  
+  [data-testid="stFileUploaderDropzone"] {
+      padding: 0 !important;
+      min-height: 0 !important;
+      background-color: transparent !important;
+      border: none !important;
+  }
+  
+  [data-testid="stFileUploaderDropzone"] button {
+      width: 100% !important;
+      border: 1px solid rgba(49, 51, 63, 0.2) !important;
+      background-color: white !important;
+      color: #31333F !important;
+      transition: 0.2s;
+  }
+  
+  [data-testid="stFileUploaderDropzone"] button:hover {
+      border-color: #2E86DE !important;
+      color: #2E86DE !important;
+  }
+
   @media (max-width: 640px){
     .block-container{padding-left:.6rem;padding-right:.6rem;padding-top:3.5rem;}
     h1{font-size:1.3rem!important;} h2{font-size:1.1rem!important;} h3{font-size:1rem!important;}
