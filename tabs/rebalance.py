@@ -38,31 +38,55 @@ def render_rebalance():
 
     positions = state.g("portfolio_data", [])
     cash = state.g("portfolio_cash", 0.0)
+    cash_pct = state.g("portfolio_cash_pct", 0.0)
     
-    stocks_value = 0.0
+    # Считаем текущую стоимость акций по рыночной цене (или ТВХ, если цены нет)
+    current_stocks_value = 0.0
     for p in positions:
         inst = get_instrument(p["Тикер"], df_stocks)
+        price = inst.price if inst.price > 0 else p["ТВХ"]
         lot_size = inst.lot_size if inst.lot_size > 0 else 1
-        stocks_value += p["ТВХ"] * p["Лотов"] * lot_size
+        current_stocks_value += price * p["Лотов"] * lot_size
 
-    total_portfolio_value = stocks_value + cash
+    total_portfolio_value = current_stocks_value + cash
     
     st.markdown("### 1. Настройка секторов")
     
-    if "rebal_sectors" in st.session_state:
-        current_df = st.session_state["rebal_sectors"]
-        active = [f"{row['Сектор']} - {row['Доля, %']:.0f}%" for _, row in current_df.iterrows() if row['Доля, %'] > 0]
-        if active:
-            st.markdown(f"**Текущее распределение:** {', '.join(active)}")
-            
+    # --- Выбор сценария ---
+    scenario = st.radio(
+        "Сценарий распределения:",
+        [
+            "Без продажи акций (Добавить свободный кеш)",
+            "С продажей акций (Целевая структура)"
+        ],
+        horizontal=True,
+        help="Без продажи: бюджет акций = текущие акции + весь кеш. С продажей: бюджет акций = общий портфель минус целевой кеш."
+    )
+    
+    if "Без продажи" in scenario:
+        base_budget = current_stocks_value + cash
+    else:
+        # Целевой размер акций = общий портфель * (1 - целевой кеш%)
+        base_budget = total_portfolio_value * (1 - cash_pct / 100)
+        
     st.info(
-        f"Стоимость акций (база для распределения): {stocks_value:.2f} ₽ | "
-        f"Кеш: {cash:.2f} ₽ | "
+        f"Текущие акции: {current_stocks_value:.2f} ₽ | "
+        f"Кеш: {cash:.2f} ₽ ({cash_pct:.1f}%) | "
         f"Всего портфель: {total_portfolio_value:.2f} ₽"
     )
+    st.markdown(f"**База для распределения ({scenario.split(' ')[0]}): {base_budget:,.2f} ₽**")
+    
+    # Справочная информация
+    if "rebal_sectors" in st.session_state:
+        current_df = st.session_state["rebal_sectors"]
+        active = [
+            f"{row['Сектор']} - {row['Доля, %']:.0f}% ({(base_budget * row['Доля, %'] / 100):,.0f} ₽)" 
+            for _, row in current_df.iterrows() if row['Доля, %'] > 0
+        ]
+        if active:
+            st.markdown(f"**Текущее распределение:** {', '.join(active)}")
 
     if "rebal_sectors" not in st.session_state:
-        # Пытаемся восстановить из state (если был JSON)
         saved = state.g("rebal_sectors_data", None)
         if saved:
             st.session_state["rebal_sectors"] = pd.DataFrame(saved)
@@ -81,7 +105,6 @@ def render_rebalance():
         }
     )
     st.session_state["rebal_sectors"] = edited_sectors
-    # Сохраняем в state для JSON
     state.set_global("rebal_sectors_data", edited_sectors.to_dict('records'))
     
     total_pct = edited_sectors["Доля, %"].sum()
@@ -117,8 +140,8 @@ def render_rebalance():
         pct = row["Доля, %"]
         if not sector: continue
             
-        sector_budget = stocks_value * (pct / 100)
-        st.markdown(f"**{sector}** (Бюджет: {sector_budget:.0f} ₽)")
+        sector_budget = base_budget * (pct / 100)
+        st.markdown(f"**{sector}** (Бюджет: {sector_budget:,.0f} ₽)")
         
         default_tickers = st.session_state["rebal_tickers"].get(sector, [])
         selected = st.multiselect(
@@ -130,7 +153,6 @@ def render_rebalance():
         )
         st.session_state["rebal_tickers"][sector] = selected
 
-    # Сохраняем в state для JSON
     state.set_global("rebal_tickers_data", st.session_state["rebal_tickers"])
 
     st.markdown("### 3. Итоговая таблица ребалансировки")
@@ -145,7 +167,7 @@ def render_rebalance():
         tickers = st.session_state["rebal_tickers"].get(sector, [])
         if not tickers: continue
             
-        sector_budget = stocks_value * (pct / 100)
+        sector_budget = base_budget * (pct / 100)
         sector_scores = {t: score_map.get(t, 0) for t in tickers}
         total_sector_score = sum(sector_scores.values())
         
@@ -209,4 +231,4 @@ def render_rebalance():
     )
     
     total_planned = df_result["Планируемая сумма, ₽"].sum()
-    st.markdown(f"**Итого распределено:** {total_planned:.0f} ₽ из {stocks_value:.0f} ₽ (Стоимость акций)")
+    st.markdown(f"**Итого распределено:** {total_planned:,.0f} ₽ из {base_budget:,.0f} ₽")
