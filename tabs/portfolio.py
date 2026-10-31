@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import math
 from core import state
 from core.market import fetch_moex_stocks, fetch_many_dividends
 from core.calc import get_instrument
@@ -70,7 +71,7 @@ def render_portfolio(df_stocks: pd.DataFrame):
     planned_amounts = state.g("rebalance_planned_amounts", {})
     
     if not planned_amounts:
-        st.warning("Внимание: Таблица «Ребалансировка» пуста. Целевые лоты и рекомендации по действиям будут равны 0.")
+        st.warning("Внимание: Таблица «Ребалансировка» пуста. Доступные лоты и рекомендации по действиям будут равны 0.")
 
     rows = []
     total_value = 0.0
@@ -91,58 +92,54 @@ def render_portfolio(df_stocks: pd.DataFrame):
         pl_rub = value - cost
         pl_pct = (current_price / avg_price - 1) * 100 if avg_price > 0 else 0.0
         
-        # 1. Данные за 12 месяцев СТРОГО с dohod.ru
+        # 1. Дивиденды за 12 месяцев строго с dohod.ru
         div_12m = divs_data.get(t, {}).get("div_12m", 0.0)
         div_yield_tvh = (div_12m / avg_price * 100) if avg_price > 0 else 0.0
         
-        # 2. Данные Брутто/Нетто СТРОГО из вкладки "Дивиденды"
+        # 2. Брутто и Нетто строго из вкладки "Дивиденды" в Excel
         fut_div_per_share = future_divs.get(t, 0.0)
         gross_div = fut_div_per_share * shares
         net_div = gross_div * (1 - 0.13)
         
-        # 3. Целевые лоты (из Ребалансировки)
+        # 3. Расчет лотов (все целые числа)
         target_amount = planned_amounts.get(t, 0.0)
         tvh_safe = avg_price if avg_price > 0 else current_price
-        target_lots = (target_amount / (tvh_safe * lot_size)) if tvh_safe > 0 else 0.0
         
-        # 4. Загруженность позиции (Текущие лоты / Целевые лоты * 100)
-        load_pct = (lots / target_lots * 100) if target_lots > 0 else 0.0
-        
-        # 5. Лоты по доходности
+        if tvh_safe > 0 and target_amount > 0:
+            target_lots = math.floor((target_amount / (tvh_safe * lot_size)) + 0.5)
+        else:
+            target_lots = 0
+            
         if div_yield_tvh > 0 and cb_rate > 0 and target_lots > 0:
-            lots_by_yield = target_lots * (div_yield_tvh / cb_rate)
+            lots_by_yield = math.floor((target_lots * (div_yield_tvh / cb_rate)) + 0.5)
             action_lots = lots_by_yield - lots
-            if action_lots > 0.1:
-                action_str = f"Купить {action_lots:.1f}"
-            elif action_lots < -0.1:
-                action_str = f"Продать {abs(action_lots):.1f}"
+            if action_lots > 0:
+                action_str = f"Купить {action_lots}"
+            elif action_lots < 0:
+                action_str = f"Продать {abs(action_lots)}"
             else:
                 action_str = "Держать"
         else:
-            lots_by_yield = 0.0
+            lots_by_yield = 0
             action_str = "—"
             
         total_value += value
         total_cost += cost
         
         rows.append({
-            "Тикер": t,
             "Название": inst.name,
-            "Сектор": r.get("Сектор", "Разное"),
-            "Лотов": lots,
+            "Тикер": t,
+            "Рыночная цена": current_price,
             "ТВХ": avg_price,
-            "Цена": current_price,
-            "Стоимость": value,
-            "P/L ₽": pl_rub,
+            "Лотов": lots,
+            "Прибыль или убыток": pl_rub,
             "P/L %": pl_pct,
-            "Див 12м": div_12m,
+            "Дивиденды за 12 мес.": div_12m,
             "Див брутто": gross_div,
             "Див нетто": net_div,
-            "Цель лотов": target_lots,
-            "Лотов по дох.": lots_by_yield,
-            "Загруженность": load_pct,
-            "Действие": action_str,
-            "_lot_size": lot_size
+            "Доступно лотов": target_lots,
+            "Лотов по доходности": lots_by_yield,
+            "Действия": action_str,
         })
 
     df_res = pd.DataFrame(rows)
@@ -151,44 +148,44 @@ def render_portfolio(df_stocks: pd.DataFrame):
     
     def style_pl(row):
         styles = [""] * len(row)
-        if row["P/L ₽"] > 0:
+        
+        # Индексы колонок: Прибыль (5), P/L % (6), Действия (12)
+        if row["Прибыль или убыток"] > 0:
+            styles[5] = "color: #4CAF50; font-weight: bold;"
             styles[6] = "color: #4CAF50; font-weight: bold;"
-            styles[7] = "color: #4CAF50; font-weight: bold;"
-        elif row["P/L ₽"] < 0:
+        elif row["Прибыль или убыток"] < 0:
+            styles[5] = "color: #F44336; font-weight: bold;"
             styles[6] = "color: #F44336; font-weight: bold;"
-            styles[7] = "color: #F44336; font-weight: bold;"
             
-        act = row["Действие"]
-        act_idx = row.index.get_loc("Действие")
+        act = row["Действия"]
         if "Купить" in act:
-            styles[act_idx] = "background-color: #C8E6C9; color: #1B5E20; font-weight: bold;"
+            styles[12] = "background-color: #C8E6C9; color: #1B5E20; font-weight: bold;"
         elif "Продать" in act:
-            styles[act_idx] = "background-color: #FFCDD2; color: #B71C1C; font-weight: bold;"
+            styles[12] = "background-color: #FFCDD2; color: #B71C1C; font-weight: bold;"
             
         return styles
 
     display_df = df_res[[
-        "Тикер", "Название", "Сектор", "Лотов", "ТВХ", "Цена", 
-        "Стоимость", "P/L ₽", "P/L %", 
-        "Див 12м", "Див брутто", "Див нетто", 
-        "Цель лотов", "Лотов по дох.", "Загруженность", "Действие"
+        "Название", "Тикер", "Рыночная цена", "ТВХ", "Лотов",
+        "Прибыль или убыток", "P/L %", 
+        "Дивиденды за 12 мес.", "Див брутто", "Див нетто", 
+        "Доступно лотов", "Лотов по доходности", "Действия"
     ]].copy()
 
     styled_df = (
         display_df.style
         .apply(style_pl, axis=1)
         .format({
+            "Рыночная цена": "{:.2f}",
             "ТВХ": "{:.2f}",
-            "Цена": "{:.2f}",
-            "Стоимость": "{:.0f}",
-            "P/L ₽": "{:+.0f}",
+            "Лотов": "{:.0f}",
+            "Прибыль или убыток": "{:+.0f}",
             "P/L %": "{:+.2f}%",
-            "Див 12м": "{:.2f}",
+            "Дивиденды за 12 мес.": "{:.2f}",
             "Див брутто": "{:.0f}",
             "Див нетто": "{:.0f}",
-            "Цель лотов": "{:.1f}",
-            "Лотов по дох.": "{:.1f}",
-            "Загруженность": "{:.1f}%",
+            "Доступно лотов": "{:.0f}",
+            "Лотов по доходности": "{:.0f}",
         })
     )
 
