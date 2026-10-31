@@ -144,6 +144,12 @@ def render_rebalance():
                 "Доля в портфеле, %": share_in_portfolio,
             })
 
+    # --- Сохраняем суммы для вкладки Портфель ---
+    planned_amounts = {}
+    for r in table_rows:
+        planned_amounts[r["Тикер"]] = r["Планируемая сумма, ₽"]
+    state.set_global("rebalance_planned_amounts", planned_amounts)
+
     if not table_rows:
         st.info("Добавьте тикеры в секторы, чтобы увидеть расчет.")
         return
