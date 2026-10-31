@@ -383,8 +383,10 @@ with st.sidebar:
                     st.error("Не найдены колонки Тикер / ТВХ / Лотов.")
             except Exception as e: st.error(f"Ошибка: {e}")
 
+    # --- Подготовка экспорта ---
     if st.button("Подготовить экспорт JSON"):
-        st.session_state["_export_blob"] = storage.dumps(S)
+        st.session_state["_export_requested"] = True
+
     blob = st.session_state.get("_export_blob")
     if blob:
         st.download_button("Скачать JSON", data=blob, file_name="backup.json", mime="application/json")
@@ -395,7 +397,6 @@ with st.sidebar:
         if parsed:
             state.replace_state(parsed)
             
-            # Очищаем кэш ВСЕХ виджетов, включая multiselect (tags_*), чтобы они подтянули новые данные из JSON
             keys_to_delete = ["ui_cash_rub", "ui_cash_pct", "rebal_sectors", "rebal_tickers", "plan_ticker"]
             for k in list(st.session_state.keys()):
                 if k.startswith("tags_") or k in keys_to_delete:
@@ -459,3 +460,11 @@ with tab_calc:
             st.error(f"Ошибка: {e}")
 
 state.autosave()
+
+# ============================================================
+# Логика экспорта в самом конце (когда все вкладки обновили S)
+# ============================================================
+if st.session_state.get("_export_requested"):
+    st.session_state["_export_blob"] = storage.dumps(S)
+    st.session_state["_export_requested"] = False
+    st.rerun()
