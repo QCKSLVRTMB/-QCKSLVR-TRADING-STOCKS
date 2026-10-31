@@ -3,6 +3,13 @@ import pandas as pd
 from core import state
 from core.market import fetch_moex_stocks, fetch_moex_indices, fetch_extreme_close
 from core.ranking import calc_ranking
+from core.calc import get_instrument
+
+DEFAULT_SECTORS = [
+    "Нефтегаз", "Финансовый", "Металлы и добыча", "Энергетика", 
+    "Телекомы", "Потребительский", "Химия", "Инновации", 
+    "Транспорт", "ИТ", "Строительство", "Разное"
+]
 
 def render_rebalance():
     st.subheader("Ребалансировка портфеля")
@@ -29,14 +36,28 @@ def render_rebalance():
         score_map = dict(zip(df_ranked["SECID"], df_ranked["total_score"]))
         name_map = dict(zip(df_ranked["SECID"], df_ranked["SHORTNAME"]))
 
-    st.markdown("### 1. Настройка секторов")
+    # --- Расчет стоимости акций ---
+    positions = state.g("portfolio_data", [])
+    cash = state.g("portfolio_cash", 0.0)
     
+    stocks_value = 0.0
+    for p in positions:
+        inst = get_instrument(p["Тикер"], df_stocks)
+        lot_size = inst.lot_size if inst.lot_size > 0 else 1
+        stocks_value += p["ТВХ"] * p["Лотов"] * lot_size
+
+    total_portfolio_value = stocks_value + cash
+    
+    st.markdown("### 1. Настройка секторов")
+    st.info(
+        f"Стоимость акций (база для распределения): **{stocks_value:,.2f} ₽** | "
+        f"Кеш: **{cash:,.2f} ₽** | "
+        f"Всего портфель: **{total_portfolio_value:,.2f} ₽**"
+    )
+
     if "rebal_sectors" not in st.session_state:
         st.session_state["rebal_sectors"] = pd.DataFrame([
-            {"Сектор": "Нефтегаз", "Доля, %": 35},
-            {"Сектор": "Финансовый", "Доля, %": 25},
-            {"Сектор": "Металлы и добыча", "Доля, %": 30},
-            {"Сектор": "Разное", "Доля, %": 10},
+            {"Сектор": s, "Доля, %": 0.0} for s in DEFAULT_SECTORS
         ])
 
     edited_sectors = st.data_editor(
@@ -45,33 +66,44 @@ def render_rebalance():
         use_container_width=True,
         column_config={
             "Сектор": st.column_config.TextColumn("Название сектора", required=True),
-            "Доля, %": st.column_config.NumberColumn("Целевая доля, %", min_value=0, max_value=100, step=1, format="%d%%")
+            "Доля, %": st.column_config.NumberColumn("Целевая доля, %", min_value=0.0, max_value=100.0, step=1.0, format="%.1f%%")
         }
     )
+    
+    # --- Автоматическое заполнение пустых долей ---
+    total_pct = edited_sectors["Доля, %"].sum()
+    if total_pct < 100.0:
+        empty_mask = edited_sectors["Доля, %"] == 0.0
+        empty_count = empty_mask.sum()
+        if empty_count > 0:
+            remainder = 100.0 - total_pct
+            share = remainder / empty_count
+            edited_sectors.loc[empty_mask, "Доля, %"] = share
+            total_pct = 100.0
+            st.toast("Пустые доли заполнены остатком поровну", icon="ℹ️")
+
     st.session_state["rebal_sectors"] = edited_sectors
     
-    total_pct = edited_sectors["Доля, %"].sum()
-    if total_pct != 100:
+    if total_pct != 100.0 and total_pct > 0:
         st.warning(f"⚠️ Сумма долей секторов равна {total_pct}%. Рекомендуется, чтобы сумма была 100%.")
-    
-    deposit = state.g("deposit", 100000)
-    st.info(f"Общий депозит: **{deposit:,.2f} ₽**".replace(",", " "))
 
+    # ============================================================
+    # 2. ДОБАВЛЕНИЕ ТИКЕРОВ
+    # ============================================================
     st.markdown("### 2. Выбор активов (тикеров)")
-    st.caption("Введите тикеры для каждого сектора. Баллы подтянутся автоматически из вкладки «Рейтинг».")
+    st.caption("Введите тикеры для каждого сектора.")
 
     all_tickers = sorted(df_stocks["SECID"].unique().tolist())
-    
     if "rebal_tickers" not in st.session_state:
         st.session_state["rebal_tickers"] = {}
 
     for _, row in edited_sectors.iterrows():
         sector = row["Сектор"]
         pct = row["Доля, %"]
-        
         if not sector: continue
             
-        st.markdown(f"**{sector}** (Бюджет: {(deposit * pct / 100):,.0f} ₽)".replace(",", " "))
+        sector_budget = stocks_value * (pct / 100)
+        st.markdown(f"**{sector}** (Бюджет: {sector_budget:,.0f} ₽)".replace(",", " "))
         
         default_tickers = st.session_state["rebal_tickers"].get(sector, [])
         selected = st.multiselect(
@@ -83,6 +115,9 @@ def render_rebalance():
         )
         st.session_state["rebal_tickers"][sector] = selected
 
+    # ============================================================
+    # 3. РАСЧЕТ
+    # ============================================================
     st.markdown("### 3. Итоговая таблица ребалансировки")
     
     table_rows = []
@@ -95,7 +130,7 @@ def render_rebalance():
         tickers = st.session_state["rebal_tickers"].get(sector, [])
         if not tickers: continue
             
-        sector_budget = deposit * (pct / 100)
+        sector_budget = stocks_value * (pct / 100)
         sector_scores = {t: score_map.get(t, 0) for t in tickers}
         total_sector_score = sum(sector_scores.values())
         
@@ -109,7 +144,7 @@ def render_rebalance():
                 planned_amount = sector_budget / len(tickers)
                 share_in_sector = 100 / len(tickers)
                 
-            share_in_portfolio = (planned_amount / deposit) * 100 if deposit > 0 else 0
+            share_in_portfolio = (planned_amount / total_portfolio_value) * 100 if total_portfolio_value > 0 else 0
             
             table_rows.append({
                 "Сектор": sector,
@@ -154,4 +189,4 @@ def render_rebalance():
     )
     
     total_planned = df_result["Планируемая сумма, ₽"].sum()
-    st.markdown(f"**Итого распределено:** {total_planned:,.0f} ₽ из {deposit:,.0f} ₽".replace(",", " "))
+    st.markdown(f"**Итого распределено:** {total_planned:,.0f} ₽ из {stocks_value:,.0f} ₽ (Стоимость акций)".replace(",", " "))
