@@ -49,7 +49,6 @@ def render_rebalance():
     
     st.markdown("### 1. Настройка секторов")
     
-    # Справочная информация
     if "rebal_sectors" in st.session_state:
         current_df = st.session_state["rebal_sectors"]
         active = [f"{row['Сектор']} - {row['Доля, %']:.0f}%" for _, row in current_df.iterrows() if row['Доля, %'] > 0]
@@ -63,9 +62,14 @@ def render_rebalance():
     )
 
     if "rebal_sectors" not in st.session_state:
-        st.session_state["rebal_sectors"] = pd.DataFrame([
-            {"Сектор": s, "Доля, %": 0.0} for s in DEFAULT_SECTORS
-        ])
+        # Пытаемся восстановить из state (если был JSON)
+        saved = state.g("rebal_sectors_data", None)
+        if saved:
+            st.session_state["rebal_sectors"] = pd.DataFrame(saved)
+        else:
+            st.session_state["rebal_sectors"] = pd.DataFrame([
+                {"Сектор": s, "Доля, %": 0.0} for s in DEFAULT_SECTORS
+            ])
 
     edited_sectors = st.data_editor(
         st.session_state["rebal_sectors"],
@@ -77,6 +81,8 @@ def render_rebalance():
         }
     )
     st.session_state["rebal_sectors"] = edited_sectors
+    # Сохраняем в state для JSON
+    state.set_global("rebal_sectors_data", edited_sectors.to_dict('records'))
     
     total_pct = edited_sectors["Доля, %"].sum()
     if total_pct > 100.0:
@@ -92,7 +98,11 @@ def render_rebalance():
     all_tickers = sorted(df_stocks["SECID"].unique().tolist())
     
     if "rebal_tickers" not in st.session_state:
-        st.session_state["rebal_tickers"] = {}
+        saved = state.g("rebal_tickers_data", None)
+        if saved:
+            st.session_state["rebal_tickers"] = saved
+        else:
+            st.session_state["rebal_tickers"] = {}
         
     if not any(st.session_state["rebal_tickers"].values()):
         for p in positions:
@@ -119,6 +129,9 @@ def render_rebalance():
             label_visibility="collapsed"
         )
         st.session_state["rebal_tickers"][sector] = selected
+
+    # Сохраняем в state для JSON
+    state.set_global("rebal_tickers_data", st.session_state["rebal_tickers"])
 
     st.markdown("### 3. Итоговая таблица ребалансировки")
     
