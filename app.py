@@ -383,7 +383,6 @@ with st.sidebar:
                     st.error("Не найдены колонки Тикер / ТВХ / Лотов.")
             except Exception as e: st.error(f"Ошибка: {e}")
 
-    # --- Подготовка экспорта ---
     if st.button("Подготовить экспорт JSON"):
         st.session_state["_export_requested"] = True
 
