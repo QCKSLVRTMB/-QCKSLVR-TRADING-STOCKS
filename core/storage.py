@@ -79,7 +79,8 @@ def _normalize_ticker(raw: dict) -> dict:
 def migrate(raw: dict) -> dict:
     if not isinstance(raw, dict): return default_state()
     st_ = default_state()
-    st_["global"].update({k: v for k, v in (raw.get("global") or {}).items() if k in DEFAULT_GLOBAL})
+    # ИСПРАВЛЕНИЕ: Больше не фильтруем ключи, сохраняем всё, что пришло в JSON
+    st_["global"].update(raw.get("global") or {})
     raw_tickers = raw.get("tickers") or {}
     st_["tickers"] = {str(k): _normalize_ticker(v) for k, v in raw_tickers.items() if k is not None}
     st_["saved_at"] = raw.get("saved_at")
@@ -122,7 +123,6 @@ def dumps(state: dict, pretty: bool = True) -> str:
     if "tickers" in state:
         state["tickers"] = {str(k): v for k, v in state["tickers"].items() if k is not None}
 
-    # Убрали sort_keys=True, чтобы избежать TypeError с None
     try:
         return json.dumps(state, ensure_ascii=False, indent=2 if pretty else None,
                           separators=None if pretty else (",", ":"), default=json_serializer)
