@@ -55,8 +55,10 @@ def _norm(text) -> str:
 def _split_class(raw) -> tuple[str, str]:
     if pd.isna(raw): return "", "common"
     s_raw = str(raw).strip().lower()
+    s_raw = re.sub(r'\b(оао|пао|зао|ао|ак|ооо|мкпао)\b', '', s_raw).strip()
     s_norm = _norm(s_raw)
     if not s_norm: return "", "common"
+    
     for pat in ('-pref', ' pref', '-ап', ', ап', ' ап', '-п', ' п'):
         if s_raw.endswith(pat) and len(s_raw) > len(pat):
             m = _norm(pat)
@@ -93,7 +95,7 @@ def _parse_arsagera(df_ars) -> tuple[dict, dict]:
     if df_ars is None or df_ars.empty: return ars_dict, name_index
     for group_num, start_col in enumerate([0, 5, 10, 15], start=1):
         if start_col >= df_ars.shape[1]: continue
-        for i in range(2, len(df_ars)):
+        for i in range(len(df_ars)):
             t_raw = df_ars.iloc[i, start_col] if start_col < df_ars.shape[1] else None
             n_raw = df_ars.iloc[i, start_col + 1] if start_col + 1 < df_ars.shape[1] else None
             if pd.isna(t_raw) or pd.isna(n_raw): continue
@@ -157,26 +159,47 @@ def _parse_dividends_sheet(xls: pd.ExcelFile) -> dict:
     sheet_name = next((s for s in xls.sheet_names if 'дивиденд' in s.lower()), None)
     if not sheet_name: return {}
     df = pd.read_excel(xls, sheet_name=sheet_name)
-    cols = {str(c).strip().lower(): c for c in df.columns}
     
-    t_col = next((c for k, c in cols.items() if 'тикер' in k), None)
-    d_col = next((c for k, c in cols.items() if 'дата' in k or 'период' in k), None)
-    v_col = next((c for k, c in cols.items() if 'дивиденд' in k or 'выплата' in k or 'сумма' in k or 'руб' in k), None)
+    # Строго ищем колонку 'Тикер'
+    t_col = next((c for c in df.columns if 'тикер' in str(c).lower()), None)
     
-    if not all([t_col, d_col, v_col]): return {}
+    # Ищем колонку с суммой (где есть 'дивиденд' и 'руб')
+    v_col = next((c for c in df.columns if 'дивиденд' in str(c).lower() and 'руб' in str(c).lower()), None)
+    if not v_col:
+        v_col = next((c for c in df.columns if 'дивиденд' in str(c).lower()), None)
+        
+    if not t_col or not v_col: return {}
+    
+    # Ищем колонку с датой (Купить До, Дата закрытия, Выплата До)
+    d_col = None
+    for c in df.columns:
+        cl = str(c).lower()
+        if 'выплат' in cl or 'закрыт' in cl or 'купить' in cl:
+            d_col = c
+            break
+            
+    if not d_col: return {}
     
     res = {}
     now = pd.to_datetime('today').normalize()
     for _, row in df.iterrows():
         t = str(row[t_col]).strip().upper()
         if not _TICKER_RE.match(t) or t in {'ТИКЕР', 'TICKER'}: continue
+        
         try:
-            dt = pd.to_datetime(row[d_col], dayfirst=True)
-            if pd.isna(dt): continue
+            dt_raw = row[d_col]
+            if pd.isna(dt_raw): continue
+            # В Excel даты могут быть числами или строками
+            if isinstance(dt_raw, (int, float)):
+                dt = pd.to_datetime(dt_raw, unit='D', origin='1899-12-30')
+            else:
+                dt = pd.to_datetime(dt_raw, dayfirst=True)
+                
             if dt >= now:
-                val = float(str(row[v_col]).replace(',', '.'))
+                val = float(str(row[v_col]).replace(',', '.').replace(' ', ''))
                 res[t] = res.get(t, 0.0) + val
-        except: continue
+        except Exception:
+            continue
     return res
 
 def _parse_portfolio_any(df_raw: pd.DataFrame, df_stocks: pd.DataFrame) -> tuple[list[dict], float]:
@@ -187,12 +210,14 @@ def _parse_portfolio_any(df_raw: pd.DataFrame, df_stocks: pd.DataFrame) -> tuple
     t_candidates = [c for k, c in cols.items() if 'тикер' in k]
     p_candidates = [c for k, c in cols.items() if 'твх' in k or 'средн' in k or 'цена входа' in k]
     q_candidates = [c for k, c in cols.items() if 'лотов' in k or 'колич' in k or 'кол-во' in k]
+    s_candidates = [c for k, c in cols.items() if 'сектор' in k]
     
     if not t_candidates or not p_candidates or not q_candidates: 
         return [], 0.0
         
     t_col = t_candidates[0]
     p_col = p_candidates[0]
+    s_col = s_candidates[0] if s_candidates else None
     
     q_col = q_candidates[0]
     max_valid = -1
@@ -217,13 +242,15 @@ def _parse_portfolio_any(df_raw: pd.DataFrame, df_stocks: pd.DataFrame) -> tuple
         except (ValueError, TypeError): continue
         
         if p <= 0 or q <= 0: continue
-        records.append({"Тикер": t, "ТВХ": p, "Лотов": q})
+        
+        sec = str(r[s_col]).strip() if s_col and not pd.isna(r[s_col]) else "Разное"
+        records.append({"Тикер": t, "ТВХ": p, "Лотов": q, "Сектор": sec})
         
     cash_val = 0.0
     for _, row in df_raw.iterrows():
-        row_str = [str(x).strip().lower() for x in row.values]
-        if any(s == "рубли" or s == "рубль" or "кеш" in s or "cash" in s for s in row_str):
-            for cell in row.values:
+        val_a = str(row.iloc[0]).strip().lower() if not pd.isna(row.iloc[0]) else ""
+        if val_a in ("рубли", "рубль", "кеш", "cash"):
+            for cell in row.values[1:]:
                 try:
                     val = float(str(cell).replace(',', '.'))
                     if val >= 0:
@@ -248,7 +275,6 @@ with st.sidebar:
     st.divider()
     st.header("Импорт / Экспорт")
 
-    # W-формации
     w_file = st.file_uploader("Импорт W-формаций", type=["xlsx", "xls"], key="upl_w")
     if w_file is not None:
         _h = _file_hash(w_file)
@@ -265,7 +291,6 @@ with st.sidebar:
                     st.error("Не найдены направления.")
             except Exception as e: st.error(f"Ошибка: {e}")
 
-    # Источники (Арсагера, DSI, Дивиденды)
     sources_file = st.file_uploader("Импорт Источников", type=["xlsx", "xls"], key="upl_src")
     if sources_file is not None:
         _h = _file_hash(sources_file)
@@ -296,7 +321,6 @@ with st.sidebar:
                     st.error("Загружено 0 записей.")
             except Exception as e: st.error(f"Ошибка: {e}")
 
-    # Портфель
     port_file = st.file_uploader("Импорт Портфеля", type=["xlsx", "xls"], key="upl_port")
     if port_file is not None:
         _h = _file_hash(port_file)
@@ -308,7 +332,7 @@ with st.sidebar:
                     state.set_global("portfolio_data", records)
                     state.set_global("portfolio_cash_file", cash)
                     state.set_global("portfolio_cash", cash) 
-                    st.session_state["ui_cash"] = cash
+                    st.session_state["ui_cash_rub"] = cash
                     st.session_state["_port_hash"] = _h
                     st.success(f"Портфель загружен: {len(records)} позиций, кеш {cash:,.0f} ₽")
                     state.autosave()
