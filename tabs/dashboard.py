@@ -78,20 +78,13 @@ def render_dashboard(df_stocks: pd.DataFrame):
     st.markdown("### Бенчмаркинг")
     st.caption("Сравнение динамики портфеля с индексом Московской Биржи (IMOEX) за последние 6 месяцев.")
     
-    # Получаем исторические данные IMOEX
-    end_date = datetime.now()
-    start_date = end_date - timedelta(days=180)
-    
     with st.spinner("Загрузка данных IMOEX..."):
         df_imoex = fetch_moex_candles("IMOEX", interval=24, days_back=180, market="index")
         
     if not df_imoex.empty:
-        # Нормализуем IMOEX к 0% на начало периода
         base_price = df_imoex['Close'].iloc[0]
         df_imoex['Return %'] = (df_imoex['Close'] / base_price - 1) * 100
         
-        # Для портфеля (упрощенно): средневзвешенная доходность текущего портфеля
-        # (Реальную историю портфеля без дат покупок не построить, поэтому показываем текущий P/L)
         port_return = (total_stocks_val / df_port["Вложено"].sum() - 1) * 100 if df_port["Вложено"].sum() > 0 else 0.0
         
         fig_bench = go.Figure()
@@ -100,7 +93,6 @@ def render_dashboard(df_stocks: pd.DataFrame):
             mode='lines', name='IMOEX', line=dict(color='#1976D2', width=2)
         ))
         
-        # Линия доходности портфеля (плоская, так как нет истории сделок)
         fig_bench.add_trace(go.Scatter(
             x=[df_imoex.index[0], df_imoex.index[-1]], 
             y=[port_return, port_return], 
@@ -170,19 +162,21 @@ def render_dashboard(df_stocks: pd.DataFrame):
     # 4. БУДУЩИЕ ДИВИДЕНДЫ
     # ============================================================
     st.markdown("### Будущие дивиденды")
-    future_divs = state.g("future_dividends", {})
+    future_div_list = state.g("future_div_list", [])
     
-    if not future_divs:
+    if not future_div_list:
         st.info("Нет данных о будущих дивидендах. Загрузите файл Источников с вкладкой «Дивиденды».")
     else:
         div_rows = []
-        for t, div_amt in future_divs.items():
-            in_port = next((p for p in positions if p["Тикер"] == t), None)
-            inst = get_instrument(t, df_stocks)
+        for d in future_div_list:
+            t = d["Тикер"]
+            div_amt = d["Дивиденд"]
             
+            inst = get_instrument(t, df_stocks)
             market_price = inst.price if inst.price > 0 else 0.0
             yield_market = (div_amt / market_price * 100) if market_price > 0 else 0.0
             
+            in_port = next((p for p in positions if p["Тикер"] == t), None)
             port_yield = 0.0
             if in_port:
                 tvh = float(in_port["ТВХ"])
@@ -190,15 +184,24 @@ def render_dashboard(df_stocks: pd.DataFrame):
                     port_yield = (div_amt / tvh * 100)
                     
             div_rows.append({
-                "Название": inst.name,
+                "Название": d["Название"],
                 "Тикер": t,
+                "Период": d["Период"],
                 "Дивиденд, ₽": div_amt,
+                "Дата закрытия": d["Дата закрытия"],
+                "Выплата до": d["Выплата до"],
                 "Доходность по рынку, %": yield_market,
                 "Доходность портфеля, %": port_yield if in_port else "—"
             })
             
-        df_divs = pd.DataFrame(div_rows).sort_values("Доходность по рынку, %", ascending=False)
-        
+        df_divs = pd.DataFrame(div_rows)
+        # Сортировка по дате закрытия (по возможности)
+        try:
+            df_divs["_sort_date"] = pd.to_datetime(df_divs["Дата закрытия"], format="%d.%m.%Y", errors="coerce")
+            df_divs = df_divs.sort_values("_sort_date").drop(columns=["_sort_date"])
+        except:
+            pass
+            
         st.dataframe(
             df_divs.style.format({
                 "Дивиденд, ₽": "{:.2f}",
