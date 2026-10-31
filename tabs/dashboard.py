@@ -162,10 +162,15 @@ def render_dashboard(df_stocks: pd.DataFrame):
     # 4. БУДУЩИЕ ДИВИДЕНДЫ
     # ============================================================
     st.markdown("### Будущие дивиденды")
-    future_divs_dict = state.g("future_dividends", {})
-    future_div_list = future_divs_dict.get("_list", [])
     
-    # Запасной вариант, если вдруг список пуст, но словарь сумм есть
+    # Берем список из нового ключа, либо из словаря
+    future_div_list = state.g("future_div_list", [])
+    future_divs_dict = state.g("future_dividends", {})
+    
+    if not future_div_list and "_list" in future_divs_dict:
+        future_div_list = future_divs_dict["_list"]
+        
+    # Запасной вариант, если списка нет (берем из JSON)
     if not future_div_list:
         future_div_list = [
             {"Тикер": k, "Название": "-", "Период": "-", "Дивиденд": v, "Дата закрытия реестра": "-", "Выплата до...": "-"}
@@ -184,6 +189,11 @@ def render_dashboard(df_stocks: pd.DataFrame):
             market_price = inst.price if inst.price > 0 else 0.0
             yield_market = (div_amt / market_price * 100) if market_price > 0 else 0.0
             
+            # Если названия нет, подтягиваем из базы MOEX
+            name = d.get("Название", "-")
+            if name == "-" or pd.isna(name) or not name:
+                name = inst.name if inst.name != "-" else t
+            
             in_port = next((p for p in positions if p["Тикер"] == t), None)
             port_yield = 0.0
             if in_port:
@@ -192,9 +202,9 @@ def render_dashboard(df_stocks: pd.DataFrame):
                     port_yield = (div_amt / tvh * 100)
                     
             div_rows.append({
-                "Название": d["Название"],
+                "Название": name,
                 "Тикер": t,
-                "Период": d["Период"],
+                "Период": d.get("Период", "-"),
                 "Дивиденд, ₽": div_amt,
                 "Дата закрытия реестра": d.get("Дата закрытия реестра", "-"),
                 "Выплата до...": d.get("Выплата до...", "-"),
