@@ -10,7 +10,7 @@ def render_portfolio(df_stocks: pd.DataFrame):
 
     port_data = state.g("portfolio_data", [])
     if not port_data:
-        st.info("📁 **Портфель**\n\nЗагрузите Excel-файл портфеля в боковом меню.")
+        st.info("Портфель пуст. Загрузите Excel-файл в боковом меню.")
         return
 
     df_port = pd.DataFrame(port_data)
@@ -69,6 +69,9 @@ def render_portfolio(df_stocks: pd.DataFrame):
     future_divs = state.g("future_dividends", {})
     planned_amounts = state.g("rebalance_planned_amounts", {})
     
+    if not planned_amounts:
+        st.warning("Внимание: Таблица «Ребалансировка» пуста. Целевые лоты и рекомендации по действиям будут равны 0.")
+
     rows = []
     total_value = 0.0
     total_cost = 0.0
@@ -88,19 +91,25 @@ def render_portfolio(df_stocks: pd.DataFrame):
         pl_rub = value - cost
         pl_pct = (current_price / avg_price - 1) * 100 if avg_price > 0 else 0.0
         
+        # 1. Данные за 12 месяцев СТРОГО с dohod.ru
         div_12m = divs_data.get(t, {}).get("div_12m", 0.0)
         div_yield_tvh = (div_12m / avg_price * 100) if avg_price > 0 else 0.0
         
-        # Дивиденды по тикерам из файла
+        # 2. Данные Брутто/Нетто СТРОГО из вкладки "Дивиденды"
         fut_div_per_share = future_divs.get(t, 0.0)
         gross_div = fut_div_per_share * shares
         net_div = gross_div * (1 - 0.13)
         
+        # 3. Целевые лоты (из Ребалансировки)
         target_amount = planned_amounts.get(t, 0.0)
         tvh_safe = avg_price if avg_price > 0 else current_price
         target_lots = (target_amount / (tvh_safe * lot_size)) if tvh_safe > 0 else 0.0
         
-        if div_yield_tvh > 0 and cb_rate > 0:
+        # 4. Загруженность позиции (Текущие лоты / Целевые лоты * 100)
+        load_pct = (lots / target_lots * 100) if target_lots > 0 else 0.0
+        
+        # 5. Лоты по доходности
+        if div_yield_tvh > 0 and cb_rate > 0 and target_lots > 0:
             lots_by_yield = target_lots * (div_yield_tvh / cb_rate)
             action_lots = lots_by_yield - lots
             if action_lots > 0.1:
@@ -131,6 +140,7 @@ def render_portfolio(df_stocks: pd.DataFrame):
             "Див нетто": net_div,
             "Цель лотов": target_lots,
             "Лотов по дох.": lots_by_yield,
+            "Загруженность": load_pct,
             "Действие": action_str,
             "_lot_size": lot_size
         })
@@ -161,7 +171,7 @@ def render_portfolio(df_stocks: pd.DataFrame):
         "Тикер", "Название", "Сектор", "Лотов", "ТВХ", "Цена", 
         "Стоимость", "P/L ₽", "P/L %", 
         "Див 12м", "Див брутто", "Див нетто", 
-        "Цель лотов", "Лотов по дох.", "Действие"
+        "Цель лотов", "Лотов по дох.", "Загруженность", "Действие"
     ]].copy()
 
     styled_df = (
@@ -170,14 +180,15 @@ def render_portfolio(df_stocks: pd.DataFrame):
         .format({
             "ТВХ": "{:.2f}",
             "Цена": "{:.2f}",
-            "Стоимость": "{:,.0f}",
-            "P/L ₽": "{:+,.0f}",
+            "Стоимость": "{:.0f}",
+            "P/L ₽": "{:+.0f}",
             "P/L %": "{:+.2f}%",
             "Див 12м": "{:.2f}",
-            "Див брутто": "{:,.0f}",
-            "Див нетто": "{:,.0f}",
+            "Див брутто": "{:.0f}",
+            "Див нетто": "{:.0f}",
             "Цель лотов": "{:.1f}",
             "Лотов по дох.": "{:.1f}",
+            "Загруженность": "{:.1f}%",
         })
     )
 
@@ -189,8 +200,8 @@ def render_portfolio(df_stocks: pd.DataFrame):
     )
 
     st.caption(
-        f"Всего позиций: **{len(df_res)}** · "
-        f"Стоимость акций: **{total_value:,.0f} ₽** · "
-        f"Вложено: **{total_cost:,.0f} ₽** · "
-        f"Общий P/L: **{total_value - total_cost:+,.0f} ₽**"
+        f"Всего позиций: {len(df_res)} · "
+        f"Стоимость акций: {total_value:.0f} ₽ · "
+        f"Вложено: {total_cost:.0f} ₽ · "
+        f"Общий P/L: {total_value - total_cost:+.0f} ₽"
     )
