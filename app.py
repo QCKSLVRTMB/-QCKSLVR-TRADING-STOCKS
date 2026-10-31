@@ -161,7 +161,6 @@ def _parse_dividends_sheet(xls: pd.ExcelFile) -> tuple[dict, list]:
     if not sheet_name: return {}, []
     df = pd.read_excel(xls, sheet_name=sheet_name)
     
-    # Ищем колонки по названиям, а не по индексам (защита от сдвига)
     cols = {str(c).strip().lower(): c for c in df.columns}
     t_col = next((c for k, c in cols.items() if 'тикер' in k), None)
     n_col = next((c for k, c in cols.items() if 'название' in k or 'компания' in k or 'наименование' in k), None)
@@ -349,7 +348,6 @@ with st.sidebar:
                 div_dict, div_list = {}, []
                 if any('дивиденд' in s.lower() for s in xls.sheet_names):
                     div_dict, div_list = _parse_dividends_sheet(xls)
-                    # Сохраняем список и в словарь, и в отдельный ключ
                     div_dict["_list"] = div_list
                     state.set_global("future_dividends", div_dict)
                     state.set_global("future_div_list", div_list)
@@ -436,12 +434,23 @@ with tab_rebalance:
 
 with tab_calc:
     active_tickers = G.get("active_tickers", [])
-    if not active_tickers:
-        st.info("Выберите тикер на вкладке 'Обзор'.")
+    portfolio_data = G.get("portfolio_data", [])
+    
+    # Объединяем тикеры из Обзора и из Портфеля
+    portfolio_tickers = [p["Тикер"] for p in portfolio_data if "Тикер" in p]
+    
+    # dict.fromkeys убирает дубликаты, сохраняя порядок
+    all_tickers = list(dict.fromkeys(active_tickers + portfolio_tickers))
+    
+    if not all_tickers:
+        st.info("Выберите тикер на вкладке 'Обзор' или загрузите Портфель.")
     else:
-        active = seg("Инструмент", active_tickers, key="plan_ticker", default=active_tickers[0])
-        if not active or active not in active_tickers: active = active_tickers[0]
-        try: render_trade_planner(active, df_stocks)
-        except Exception as e: st.error(f"Ошибка: {e}")
+        active = seg("Инструмент", all_tickers, key="plan_ticker", default=all_tickers[0])
+        if not active or active not in all_tickers: 
+            active = all_tickers[0]
+        try: 
+            render_trade_planner(active, df_stocks)
+        except Exception as e: 
+            st.error(f"Ошибка: {e}")
 
 state.autosave()
