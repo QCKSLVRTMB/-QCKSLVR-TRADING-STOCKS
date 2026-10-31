@@ -81,7 +81,7 @@ def render_rebalance():
     total_pct = edited_sectors["Доля, %"].sum()
     if total_pct > 100.0:
         st.markdown(
-            f"<div style='background-color: #ffcccc; padding: 10px; border-radius: 5px; color: red;'>"
+            f"<div style='background-color: #ffcccc; padding: 10px; border-radius: 5px; color: red; font-weight: bold;'>"
             f"Ошибка: Сумма долей секторов равна {total_pct:.1f}%. Сумма не должна превышать 100%.</div>", 
             unsafe_allow_html=True
         )
