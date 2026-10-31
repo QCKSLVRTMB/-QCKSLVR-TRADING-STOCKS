@@ -156,47 +156,74 @@ def _parse_w_any(xls: pd.ExcelFile) -> dict:
         if direction in _W_ALIASES: result[ticker] = _W_ALIASES[direction]
     return result
 
-def _parse_dividends_sheet(xls: pd.ExcelFile) -> dict:
+def _parse_dividends_sheet(xls: pd.ExcelFile) -> tuple[dict, list]:
     sheet_name = next((s for s in xls.sheet_names if 'дивиденд' in s.lower()), None)
-    if not sheet_name: return {}
+    if not sheet_name: return {}, []
     df = pd.read_excel(xls, sheet_name=sheet_name)
     
-    t_col = next((c for c in df.columns if 'тикер' in str(c).lower()), None)
-    v_col = next((c for c in df.columns if 'дивиденд' in str(c).lower() and 'руб' in str(c).lower()), None)
+    cols = {str(c).strip().lower(): c for c in df.columns}
+    
+    t_col = next((c for k, c in cols.items() if 'тикер' in k), None)
+    n_col = next((c for k, c in cols.items() if 'название' in k or 'компания' in k), None)
+    p_col = next((c for k, c in cols.items() if 'период' in k), None)
+    v_col = next((c for k, c in cols.items() if 'дивиденд' in k and 'руб' in k), None)
     if not v_col:
-        v_col = next((c for c in df.columns if 'дивиденд' in str(c).lower()), None)
+        v_col = next((c for k, c in cols.items() if 'дивиденд' in k), None)
         
-    if not t_col or not v_col: return {}
+    d_close_col = next((c for k, c in cols.items() if 'закрыт' in k or 'реестр' in k), None)
+    d_pay_col = next((c for k, c in cols.items() if 'выплат' in k), None)
+    d_buy_col = next((c for k, c in cols.items() if 'купить' in k), None)
     
-    d_col = None
-    for c in df.columns:
-        cl = str(c).lower()
-        if 'выплат' in cl or 'закрыт' in cl or 'купить' in cl:
-            d_col = c
-            break
-            
-    if not d_col: return {}
+    if not t_col or not v_col: return {}, []
     
-    res = {}
+    def parse_date(val):
+        if pd.isna(val): return None
+        if isinstance(val, (int, float)):
+            return pd.to_datetime(val, unit='D', origin='1899-12-30')
+        try:
+            return pd.to_datetime(val, dayfirst=True)
+        except:
+            return None
+
+    summed = {}
+    div_list = []
     now = pd.to_datetime('today').normalize()
+    
     for _, row in df.iterrows():
         t = str(row[t_col]).strip().upper()
         if not _TICKER_RE.match(t) or t in {'ТИКЕР', 'TICKER'}: continue
         
-        try:
-            dt_raw = row[d_col]
-            if pd.isna(dt_raw): continue
-            if isinstance(dt_raw, (int, float)):
-                dt = pd.to_datetime(dt_raw, unit='D', origin='1899-12-30')
-            else:
-                dt = pd.to_datetime(dt_raw, dayfirst=True)
+        # Проверяем дату (закрытия, выплаты или покупки)
+        dt_check = None
+        for col in [d_close_col, d_pay_col, d_buy_col]:
+            if col:
+                dt_check = parse_date(row[col])
+                if dt_check: break
                 
-            if dt >= now:
-                val = float(str(row[v_col]).replace(',', '.').replace(' ', ''))
-                res[t] = res.get(t, 0.0) + val
+        if not dt_check or dt_check < now:
+            continue
+            
+        try:
+            val = float(str(row[v_col]).replace(',', '.').replace(' ', ''))
+            summed[t] = summed.get(t, 0.0) + val
+            
+            name = str(row[n_col]).strip() if n_col and not pd.isna(row[n_col]) else "-"
+            period = str(row[p_col]).strip() if p_col and not pd.isna(row[p_col]) else "-"
+            dt_close = parse_date(row[d_close_col]) if d_close_col else None
+            dt_pay = parse_date(row[d_pay_col]) if d_pay_col else None
+            
+            div_list.append({
+                "Тикер": t,
+                "Название": name,
+                "Период": period,
+                "Дивиденд": val,
+                "Дата закрытия": dt_close.strftime('%d.%m.%Y') if dt_close else "-",
+                "Выплата до": dt_pay.strftime('%d.%m.%Y') if dt_pay else "-"
+            })
         except Exception:
             continue
-    return res
+            
+    return summed, div_list
 
 def _parse_portfolio_any(df_raw: pd.DataFrame, df_stocks: pd.DataFrame) -> tuple[list[dict], float]:
     if df_raw is None or df_raw.empty: return [], 0.0
@@ -299,17 +326,18 @@ with st.sidebar:
                 if 'ДОХОД DSI' in xls.sheet_names:
                     dsi_dict = _parse_dsi(pd.read_excel(xls, sheet_name='ДОХОД DSI'), name_index)
                 
-                div_dict = {}
+                div_dict, div_list = {}, []
                 if any('дивиденд' in s.lower() for s in xls.sheet_names):
-                    div_dict = _parse_dividends_sheet(xls)
+                    div_dict, div_list = _parse_dividends_sheet(xls)
                     state.set_global("future_dividends", div_dict)
+                    state.set_global("future_div_list", div_list)
                 
                 fund_data = {t: {"ars_group": ars_dict.get(t, 0), "dsi": dsi_dict.get(t, 0.0)} for t in set(ars_dict) | set(dsi_dict)}
                 if fund_data or div_dict:
                     state.set_global("fundamental_data", fund_data)
                     st.session_state["_src_hash"] = _h
                     msg = f"Загружено {len(fund_data)} записей."
-                    if div_dict: msg += f" Будущих дивидендов: {len(div_dict)}."
+                    if div_dict: msg += f" Будущих дивидендов: {len(div_list)}."
                     st.success(msg)
                     state.autosave()
                 else:
@@ -346,7 +374,6 @@ with st.sidebar:
         parsed = storage.loads(json_file.getvalue().decode("utf-8"))
         if parsed:
             state.replace_state(parsed)
-            # Восстанавливаем сессионные данные для Ребалансировки
             if "rebal_sectors_data" in parsed["global"]:
                 st.session_state["rebal_sectors"] = pd.DataFrame(parsed["global"]["rebal_sectors_data"])
             if "rebal_tickers_data" in parsed["global"]:
