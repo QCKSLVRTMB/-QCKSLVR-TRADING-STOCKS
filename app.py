@@ -153,6 +153,32 @@ def _parse_w_any(xls: pd.ExcelFile) -> dict:
         if direction in _W_ALIASES: result[ticker] = _W_ALIASES[direction]
     return result
 
+def _parse_dividends_sheet(xls: pd.ExcelFile) -> dict:
+    sheet_name = next((s for s in xls.sheet_names if 'дивиденд' in s.lower()), None)
+    if not sheet_name: return {}
+    df = pd.read_excel(xls, sheet_name=sheet_name)
+    cols = {str(c).strip().lower(): c for c in df.columns}
+    
+    t_col = next((c for k, c in cols.items() if 'тикер' in k), None)
+    d_col = next((c for k, c in cols.items() if 'дата' in k or 'период' in k), None)
+    v_col = next((c for k, c in cols.items() if 'дивиденд' in k or 'выплата' in k or 'сумма' in k or 'руб' in k), None)
+    
+    if not all([t_col, d_col, v_col]): return {}
+    
+    res = {}
+    now = pd.to_datetime('today').normalize()
+    for _, row in df.iterrows():
+        t = str(row[t_col]).strip().upper()
+        if not _TICKER_RE.match(t) or t in {'ТИКЕР', 'TICKER'}: continue
+        try:
+            dt = pd.to_datetime(row[d_col], dayfirst=True)
+            if pd.isna(dt): continue
+            if dt >= now:
+                val = float(str(row[v_col]).replace(',', '.'))
+                res[t] = res.get(t, 0.0) + val
+        except: continue
+    return res
+
 def _parse_portfolio_any(df_raw: pd.DataFrame, df_stocks: pd.DataFrame) -> tuple[list[dict], float]:
     if df_raw is None or df_raw.empty: return [], 0.0
     
@@ -168,7 +194,6 @@ def _parse_portfolio_any(df_raw: pd.DataFrame, df_stocks: pd.DataFrame) -> tuple
     t_col = t_candidates[0]
     p_col = p_candidates[0]
     
-    # Ищем колонку с количеством, в которой больше всего непустых данных (чисел)
     q_col = q_candidates[0]
     max_valid = -1
     for cand in q_candidates:
@@ -194,7 +219,6 @@ def _parse_portfolio_any(df_raw: pd.DataFrame, df_stocks: pd.DataFrame) -> tuple
         if p <= 0 or q <= 0: continue
         records.append({"Тикер": t, "ТВХ": p, "Лотов": q})
         
-    # Ищем кеш
     cash_val = 0.0
     for _, row in df_raw.iterrows():
         row_str = [str(x).strip().lower() for x in row.values]
@@ -241,7 +265,7 @@ with st.sidebar:
                     st.error("Не найдены направления.")
             except Exception as e: st.error(f"Ошибка: {e}")
 
-    # Источники
+    # Источники (Арсагера, DSI, Дивиденды)
     sources_file = st.file_uploader("Импорт Источников", type=["xlsx", "xls"], key="upl_src")
     if sources_file is not None:
         _h = _file_hash(sources_file)
@@ -255,11 +279,18 @@ with st.sidebar:
                 if 'ДОХОД DSI' in xls.sheet_names:
                     dsi_dict = _parse_dsi(pd.read_excel(xls, sheet_name='ДОХОД DSI'), name_index)
                 
+                div_dict = {}
+                if any('дивиденд' in s.lower() for s in xls.sheet_names):
+                    div_dict = _parse_dividends_sheet(xls)
+                    state.set_global("future_dividends", div_dict)
+                
                 fund_data = {t: {"ars_group": ars_dict.get(t, 0), "dsi": dsi_dict.get(t, 0.0)} for t in set(ars_dict) | set(dsi_dict)}
-                if fund_data:
+                if fund_data or div_dict:
                     state.set_global("fundamental_data", fund_data)
                     st.session_state["_src_hash"] = _h
-                    st.success(f"Загружено {len(fund_data)} записей.")
+                    msg = f"Загружено {len(fund_data)} записей."
+                    if div_dict: msg += f" Будущих дивидендов: {len(div_dict)}."
+                    st.success(msg)
                     state.autosave()
                 else:
                     st.error("Загружено 0 записей.")
@@ -277,7 +308,7 @@ with st.sidebar:
                     state.set_global("portfolio_data", records)
                     state.set_global("portfolio_cash_file", cash)
                     state.set_global("portfolio_cash", cash) 
-                    st.session_state["ui_cash"] = cash # Синхронизация виджета
+                    st.session_state["ui_cash"] = cash
                     st.session_state["_port_hash"] = _h
                     st.success(f"Портфель загружен: {len(records)} позиций, кеш {cash:,.0f} ₽")
                     state.autosave()
