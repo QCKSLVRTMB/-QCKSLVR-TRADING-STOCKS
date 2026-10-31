@@ -16,19 +16,23 @@ def render_portfolio(df_stocks: pd.DataFrame):
     df_port = pd.DataFrame(port_data)
     
     # --- Поле Кеш ---
+    def _sync_cash():
+        state.set_global("portfolio_cash", st.session_state["ui_cash"])
+        state.autosave()
+
     c1, c2 = st.columns([1, 2])
     with c1:
-        current_cash = st.number_input(
+        if "ui_cash" not in st.session_state:
+            st.session_state["ui_cash"] = float(state.g("portfolio_cash", 0.0))
+            
+        st.number_input(
             "Кеш на счету (Рубли)", 
             value=float(state.g("portfolio_cash", 0.0)), 
             step=1000.0, 
             format="%.2f",
-            key="ui_cash"
+            key="ui_cash",
+            on_change=_sync_cash
         )
-        if current_cash != state.g("portfolio_cash"):
-            state.set_global("portfolio_cash", current_cash)
-            state.autosave()
-            
     with c2:
         file_cash = state.g("portfolio_cash_file", 0.0)
         st.write("") # отступ
