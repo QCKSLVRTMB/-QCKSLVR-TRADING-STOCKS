@@ -48,10 +48,18 @@ def render_rebalance():
     total_portfolio_value = stocks_value + cash
     
     st.markdown("### 1. Настройка секторов")
+    
+    # Справочная информация
+    if "rebal_sectors" in st.session_state:
+        current_df = st.session_state["rebal_sectors"]
+        active = [f"{row['Сектор']} - {row['Доля, %']:.0f}%" for _, row in current_df.iterrows() if row['Доля, %'] > 0]
+        if active:
+            st.markdown(f"**Текущее распределение:** {', '.join(active)}")
+            
     st.info(
-        f"Стоимость акций (база для распределения): **{stocks_value:,.2f} ₽** | "
-        f"Кеш: **{cash:,.2f} ₽** | "
-        f"Всего портфель: **{total_portfolio_value:,.2f} ₽**"
+        f"Стоимость акций (база для распределения): {stocks_value:.2f} ₽ | "
+        f"Кеш: {cash:.2f} ₽ | "
+        f"Всего портфель: {total_portfolio_value:.2f} ₽"
     )
 
     if "rebal_sectors" not in st.session_state:
@@ -72,7 +80,11 @@ def render_rebalance():
     
     total_pct = edited_sectors["Доля, %"].sum()
     if total_pct > 100.0:
-        st.warning(f"⚠️ Сумма долей секторов равна {total_pct}%. Рекомендуется, чтобы сумма не превышала 100%.")
+        st.markdown(
+            f"<div style='background-color: #ffcccc; padding: 10px; border-radius: 5px; color: red;'>"
+            f"Ошибка: Сумма долей секторов равна {total_pct:.1f}%. Сумма не должна превышать 100%.</div>", 
+            unsafe_allow_html=True
+        )
 
     st.markdown("### 2. Выбор активов (тикеров)")
     st.caption("Тикеры подтягиваются автоматически на основе секторов из загруженного портфеля.")
@@ -96,7 +108,7 @@ def render_rebalance():
         if not sector: continue
             
         sector_budget = stocks_value * (pct / 100)
-        st.markdown(f"**{sector}** (Бюджет: {sector_budget:,.0f} ₽)".replace(",", " "))
+        st.markdown(f"**{sector}** (Бюджет: {sector_budget:.0f} ₽)")
         
         default_tickers = st.session_state["rebal_tickers"].get(sector, [])
         selected = st.multiselect(
@@ -170,7 +182,7 @@ def render_rebalance():
         .apply(style_row, axis=1)
         .format({
             "Балл": "{:.0f}",
-            "Планируемая сумма, ₽": "{:,.0f}",
+            "Планируемая сумма, ₽": "{:.0f}",
             "Доля в секторе, %": "{:.2f}%",
             "Доля в портфеле, %": "{:.2f}%",
         })
@@ -184,4 +196,4 @@ def render_rebalance():
     )
     
     total_planned = df_result["Планируемая сумма, ₽"].sum()
-    st.markdown(f"**Итого распределено:** {total_planned:,.0f} ₽ из {stocks_value:,.0f} ₽ (Стоимость акций)".replace(",", " "))
+    st.markdown(f"**Итого распределено:** {total_planned:.0f} ₽ из {stocks_value:.0f} ₽ (Стоимость акций)")
