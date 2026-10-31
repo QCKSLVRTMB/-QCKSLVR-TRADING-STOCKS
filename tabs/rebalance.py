@@ -95,10 +95,12 @@ def render_rebalance():
                 {"Сектор": s, "Доля, %": 0.0} for s in DEFAULT_SECTORS
             ])
 
+    # Добавлен ключ key="rebal_sectors_editor" для сохранения состояния при перерисовках
     edited_sectors = st.data_editor(
         st.session_state["rebal_sectors"],
         num_rows="dynamic",
         use_container_width=True,
+        key="rebal_sectors_editor",
         column_config={
             "Сектор": st.column_config.TextColumn("Название сектора", required=True),
             "Доля, %": st.column_config.NumberColumn("Целевая доля, %", min_value=0.0, max_value=100.0, step=1.0, format="%.1f%%")
@@ -144,10 +146,14 @@ def render_rebalance():
         st.markdown(f"**{sector}** (Бюджет: {sector_budget:,.0f} ₽)")
         
         default_tickers = st.session_state["rebal_tickers"].get(sector, [])
+        
+        # Принудительная инициализация состояния для multiselect, чтобы он не сбрасывался
+        if f"tags_{sector}" not in st.session_state:
+            st.session_state[f"tags_{sector}"] = default_tickers
+            
         selected = st.multiselect(
             f"Активы в секторе «{sector}»",
             options=all_tickers,
-            default=default_tickers,
             key=f"tags_{sector}",
             label_visibility="collapsed"
         )
@@ -193,10 +199,12 @@ def render_rebalance():
                 "Доля в портфеле, %": share_in_portfolio,
             })
 
-    planned_amounts = {}
-    for r in table_rows:
-        planned_amounts[r["Тикер"]] = r["Планируемая сумма, ₽"]
-    state.set_global("rebalance_planned_amounts", planned_amounts)
+    # Защита от затирания данных пустой таблицей
+    if table_rows:
+        planned_amounts = {}
+        for r in table_rows:
+            planned_amounts[r["Тикер"]] = r["Планируемая сумма, ₽"]
+        state.set_global("rebalance_planned_amounts", planned_amounts)
 
     if not table_rows:
         st.info("Добавьте тикеры в секторы, чтобы увидеть расчет.")
