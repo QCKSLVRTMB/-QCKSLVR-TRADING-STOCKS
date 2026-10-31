@@ -164,9 +164,10 @@ def _parse_dividends_sheet(xls: pd.ExcelFile) -> tuple[dict, list]:
     cols = {str(c).strip().lower(): c for c in df.columns}
     
     t_col = next((c for k, c in cols.items() if 'тикер' in k), None)
-    n_col = next((c for k, c in cols.items() if 'название' in k or 'компания' in k), None)
+    n_col = next((c for k, c in cols.items() if 'название' in k or 'компания' in k or 'наименование' in k), None)
     p_col = next((c for k, c in cols.items() if 'период' in k), None)
-    v_col = next((c for k, c in cols.items() if 'дивиденд' in k and 'руб' in k), None)
+    
+    v_col = next((c for k, c in cols.items() if 'дивиденд' in k and ('руб' in k or 'сумма' in k)), None)
     if not v_col:
         v_col = next((c for k, c in cols.items() if 'дивиденд' in k), None)
         
@@ -174,37 +175,59 @@ def _parse_dividends_sheet(xls: pd.ExcelFile) -> tuple[dict, list]:
     d_pay_col = next((c for k, c in cols.items() if 'выплат' in k), None)
     d_buy_col = next((c for k, c in cols.items() if 'купить' in k), None)
     
-    if not t_col or not v_col: return {}, []
+    if not t_col or not v_col: 
+        return {}, []
     
     def parse_date(val):
         if pd.isna(val): return None
-        if isinstance(val, (int, float)):
-            return pd.to_datetime(val, unit='D', origin='1899-12-30')
         try:
-            return pd.to_datetime(val, dayfirst=True)
+            if isinstance(val, (int, float)) and not isinstance(val, bool):
+                return pd.to_datetime(val, unit='D', origin='1899-12-30')
+            
+            s = str(val).strip()
+            # Жестко ищем DD.MM.YYYY
+            m = re.search(r'(\d{1,2})[\.\-\/](\d{1,2})[\.\-\/](\d{4})', s)
+            if m:
+                d, mth, y = m.groups()
+                return pd.to_datetime(f"{y}-{mth.zfill(2)}-{d.zfill(2)}")
+            
+            # Ищем YYYY-MM-DD
+            m2 = re.search(r'(\d{4})[\.\-\/](\d{1,2})[\.\-\/](\d{1,2})', s)
+            if m2:
+                y, mth, d = m2.groups()
+                return pd.to_datetime(f"{y}-{mth.zfill(2)}-{d.zfill(2)}")
+                
+            dt = pd.to_datetime(s, dayfirst=True, errors='coerce')
+            return dt if not pd.isna(dt) else None
         except:
             return None
 
     summed = {}
     div_list = []
-    now = pd.to_datetime('today').normalize()
+    now = pd.Timestamp.now().normalize()
     
     for _, row in df.iterrows():
         t = str(row[t_col]).strip().upper()
-        if not _TICKER_RE.match(t) or t in {'ТИКЕР', 'TICKER'}: continue
+        if not _TICKER_RE.match(t) or t in {'ТИКЕР', 'TICKER', 'NAN', '-'}: 
+            continue
         
-        # Проверяем дату (закрытия, выплаты или покупки)
         dt_check = None
         for col in [d_close_col, d_pay_col, d_buy_col]:
             if col:
                 dt_check = parse_date(row[col])
-                if dt_check: break
-                
+                if dt_check: 
+                    break
+        
         if not dt_check or dt_check < now:
             continue
             
         try:
-            val = float(str(row[v_col]).replace(',', '.').replace(' ', ''))
+            if pd.isna(row[v_col]): continue
+            
+            v_raw = str(row[v_col]).replace(',', '.').replace(' ', '').replace('руб', '').replace('₽', '').strip()
+            if not v_raw or v_raw.lower() == 'nan': continue
+            val = float(v_raw)
+            
             summed[t] = summed.get(t, 0.0) + val
             
             name = str(row[n_col]).strip() if n_col and not pd.isna(row[n_col]) else "-"
