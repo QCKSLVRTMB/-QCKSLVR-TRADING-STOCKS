@@ -161,22 +161,42 @@ def _parse_dividends_sheet(xls: pd.ExcelFile) -> tuple[dict, list]:
     if not sheet_name: return {}, []
     df = pd.read_excel(xls, sheet_name=sheet_name)
     
-    cols = {str(c).strip().lower(): c for c in df.columns}
+    # Жестко заданные индексы, как вы указали
+    if len(df.columns) < 9:
+        return {}, []
+        
+    t_col = df.columns[1]       # Тикер
+    n_col = df.columns[0]       # Название
+    p_col = df.columns[2]       # Период
+    v_col = df.columns[3]       # Дивиденд, руб
     
-    t_col = next((c for k, c in cols.items() if 'тикер' in k), None)
-    if not t_col: return {}, []
+    d_close_col = df.columns[7] # Дата закрытия реестра
+    d_pay_col = df.columns[8]   # Выплата до
     
-    v_col = next((c for k, c in cols.items() if 'дивиденд' in k and ('руб' in k or 'сумма' in k)), None)
-    if not v_col: 
-        v_col = next((c for k, c in cols.items() if 'дивиденд' in k), None)
-    if not v_col: return {}, []
-    
-    n_col = next((c for k, c in cols.items() if 'название' in k or 'компания' in k or 'наименование' in k), None)
-    p_col = next((c for k, c in cols.items() if 'период' in k), None)
-    d_close_col = next((c for k, c in cols.items() if 'закрыт' in k or 'реестр' in k), None)
-    d_pay_col = next((c for k, c in cols.items() if 'выплат' in k), None)
-    d_buy_col = next((c for k, c in cols.items() if 'купить' in k), None)
-    
+    def parse_date(val):
+        if pd.isna(val): return None
+        try:
+            if isinstance(val, (int, float)) and not isinstance(val, bool):
+                return pd.to_datetime(val, unit='D', origin='1899-12-30')
+            
+            s = str(val).strip()
+            # Жестко ищем DD.MM.YYYY
+            m = re.search(r'(\d{1,2})[\.\-\/](\d{1,2})[\.\-\/](\d{4})', s)
+            if m:
+                d, mth, y = m.groups()
+                return pd.to_datetime(f"{y}-{mth.zfill(2)}-{d.zfill(2)}")
+            
+            # Ищем YYYY-MM-DD
+            m2 = re.search(r'(\d{4})[\.\-\/](\d{1,2})[\.\-\/](\d{1,2})', s)
+            if m2:
+                y, mth, d = m2.groups()
+                return pd.to_datetime(f"{y}-{mth.zfill(2)}-{d.zfill(2)}")
+                
+            dt = pd.to_datetime(s, dayfirst=True, errors='coerce')
+            return dt if not pd.isna(dt) else None
+        except:
+            return None
+
     summed = {}
     div_list = []
     now = pd.Timestamp.now().normalize()
@@ -187,15 +207,11 @@ def _parse_dividends_sheet(xls: pd.ExcelFile) -> tuple[dict, list]:
             continue
         
         dt_check = None
-        for col in [d_close_col, d_pay_col, d_buy_col]:
-            if col and not pd.isna(row[col]):
-                try:
-                    dt_val = pd.to_datetime(row[col], dayfirst=True, errors='coerce')
-                    if pd.notna(dt_val):
-                        dt_check = dt_val
-                        break
-                except:
-                    pass
+        for col in [d_close_col, d_pay_col]:
+            if not pd.isna(row[col]):
+                dt_check = parse_date(row[col])
+                if dt_check:
+                    break
                     
         if dt_check is None or dt_check < now:
             continue
@@ -210,24 +226,19 @@ def _parse_dividends_sheet(xls: pd.ExcelFile) -> tuple[dict, list]:
             
         summed[t] = summed.get(t, 0.0) + val
         
-        name = str(row[n_col]).strip() if n_col and not pd.isna(row[n_col]) else "-"
-        period = str(row[p_col]).strip() if p_col and not pd.isna(row[p_col]) else "-"
+        name = str(row[n_col]).strip() if not pd.isna(row[n_col]) else "-"
+        period = str(row[p_col]).strip() if not pd.isna(row[p_col]) else "-"
         
-        dt_close = None
-        if d_close_col and not pd.isna(row[d_close_col]):
-            dt_close = pd.to_datetime(row[d_close_col], dayfirst=True, errors='coerce')
-            
-        dt_pay = None
-        if d_pay_col and not pd.isna(row[d_pay_col]):
-            dt_pay = pd.to_datetime(row[d_pay_col], dayfirst=True, errors='coerce')
+        dt_close = parse_date(row[d_close_col])
+        dt_pay = parse_date(row[d_pay_col])
         
         div_list.append({
             "Тикер": t,
             "Название": name,
             "Период": period,
             "Дивиденд": val,
-            "Дата закрытия": dt_close.strftime('%d.%m.%Y') if pd.notna(dt_close) else "-",
-            "Выплата до": dt_pay.strftime('%d.%m.%Y') if pd.notna(dt_pay) else "-"
+            "Дата закрытия реестра": dt_close.strftime('%d.%m.%Y') if dt_close else "-",
+            "Выплата до...": dt_pay.strftime('%d.%m.%Y') if dt_pay else "-"
         })
             
     return summed, div_list
