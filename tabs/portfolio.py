@@ -22,7 +22,6 @@ def render_portfolio(df_stocks: pd.DataFrame):
 
     df_port = pd.DataFrame(port_data)
     
-    # Загружаем дивиденды для всех тикеров портфеля
     tickers = df_port["Тикер"].tolist()
     with st.spinner("Загрузка дивидендов..."):
         divs_data = fetch_many_dividends(tickers)
@@ -71,10 +70,8 @@ def render_portfolio(df_stocks: pd.DataFrame):
 
     df_res = pd.DataFrame(rows)
 
-    # ---------------- Таблица ----------------
     st.markdown("#### Позиции")
     
-    # Форматирование
     def style_pl(row):
         styles = [""] * len(row)
         if row["P/L ₽"] > 0:
@@ -141,7 +138,6 @@ def render_portfolio(df_stocks: pd.DataFrame):
     decimals = 2 if current_price > 1 else 4
     div_12m = row["Див 12м"]
     
-    # DSI из Excel
     fund = state.g("fundamental_data", {}) or {}
     dsi_raw = fund.get(sel_ticker, {}).get("dsi")
     dsi_score = None
