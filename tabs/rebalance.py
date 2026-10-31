@@ -69,23 +69,11 @@ def render_rebalance():
             "Доля, %": st.column_config.NumberColumn("Целевая доля, %", min_value=0.0, max_value=100.0, step=1.0, format="%.1f%%")
         }
     )
-    
-    # --- Автоматическое заполнение пустых долей ---
-    total_pct = edited_sectors["Доля, %"].sum()
-    if total_pct < 100.0:
-        empty_mask = edited_sectors["Доля, %"] == 0.0
-        empty_count = empty_mask.sum()
-        if empty_count > 0:
-            remainder = 100.0 - total_pct
-            share = remainder / empty_count
-            edited_sectors.loc[empty_mask, "Доля, %"] = share
-            total_pct = 100.0
-            st.toast("Пустые доли заполнены остатком поровну", icon="ℹ️")
-
     st.session_state["rebal_sectors"] = edited_sectors
     
-    if total_pct != 100.0 and total_pct > 0:
-        st.warning(f"⚠️ Сумма долей секторов равна {total_pct}%. Рекомендуется, чтобы сумма была 100%.")
+    total_pct = edited_sectors["Доля, %"].sum()
+    if total_pct > 100.0:
+        st.warning(f"⚠️ Сумма долей секторов равна {total_pct}%. Рекомендуется, чтобы сумма не превышала 100%.")
 
     # ============================================================
     # 2. ДОБАВЛЕНИЕ ТИКЕРОВ
