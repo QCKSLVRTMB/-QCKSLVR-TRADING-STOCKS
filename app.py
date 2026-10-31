@@ -347,15 +347,17 @@ with st.sidebar:
                 div_dict, div_list = {}, []
                 if any('дивиденд' in s.lower() for s in xls.sheet_names):
                     div_dict, div_list = _parse_dividends_sheet(xls)
+                    
+                    # Сохраняем список прямо в словарь, чтобы он не терялся при перезагрузке
+                    div_dict["_list"] = div_list
                     state.set_global("future_dividends", div_dict)
-                    state.set_global("future_div_list", div_list)
                 
                 fund_data = {t: {"ars_group": ars_dict.get(t, 0), "dsi": dsi_dict.get(t, 0.0)} for t in set(ars_dict) | set(dsi_dict)}
                 if fund_data or div_dict:
                     state.set_global("fundamental_data", fund_data)
                     st.session_state["_src_hash"] = _h
                     msg = f"Загружено {len(fund_data)} записей."
-                    if div_dict: msg += f" Будущих дивидендов: {len(div_list)}."
+                    if div_list: msg += f" Будущих дивидендов: {len(div_list)}."
                     st.success(msg)
                     state.autosave()
                 else:
