@@ -67,7 +67,7 @@ def render_trade_planner(ticker: str, df_stocks: pd.DataFrame):
     st.markdown("#### Расчет усреднения (ТВХ)")
     if "entries" not in tdata: tdata["entries"] = []
     
-    # --- ИСПРАВЛЕНИЕ: Портфель теперь список словарей, ищем нужный элемент ---
+    # --- Портфель теперь список словарей, ищем нужный элемент ---
     portfolio_data_list = state.g("portfolio_data", [])
     port_item = next((p for p in portfolio_data_list if p.get("Тикер") == ticker), None)
     
@@ -92,13 +92,28 @@ def render_trade_planner(ticker: str, df_stocks: pd.DataFrame):
     )
     
     if not edited.empty and "Цена" in edited.columns and "Лотов" in edited.columns:
-        tdata["entries"] = [
-            {"price": float(r["Цена"]), "qty": int(r["Лотов"]), "note": str(r["Комментарий"])} 
-            for _, r in edited.iterrows() if not r.get("Lock", False)
-        ]
-        
-        total_lots = edited["Лотов"].sum()
-        total_cost = (edited["Цена"] * edited["Лотов"] * inst.lot_size).sum()
+        tdata["entries"] = []
+        # Безопасный парсинг строк (защита от NaN при клике на новую строку)
+        for _, r in edited.iterrows():
+            if r.get("Lock") == True:
+                continue
+            
+            p_val = r.get("Цена")
+            q_val = r.get("Лотов")
+            
+            if pd.isna(p_val) or pd.isna(q_val):
+                continue
+                
+            tdata["entries"].append({
+                "price": float(p_val), 
+                "qty": int(q_val), 
+                "note": str(r.get("Комментарий", ""))
+            })
+            
+        # Расчет средней цены по строкам, где есть данные
+        calc_df = edited.dropna(subset=["Цена", "Лотов"])
+        total_lots = calc_df["Лотов"].sum()
+        total_cost = (calc_df["Цена"] * calc_df["Лотов"] * inst.lot_size).sum()
         
         if total_lots > 0:
             avg_price = total_cost / (total_lots * inst.lot_size)
