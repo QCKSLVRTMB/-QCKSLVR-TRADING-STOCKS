@@ -62,14 +62,30 @@ def draw_clusters(fig, clusters, x_left, x_right, color="orange"):
     base = "rgba(33,150,243," if color == "blue" else "rgba(251,140,0,"
     _add_shapes(fig, [_rect(x_left, x_right, cl["low"], cl["high"], f"{base}{cl['opacity']:.2f})") for cl in clusters])
 
-def draw_trade_visuals(fig, buy_level, sell_level, x_left, x_right, decimals):
+def draw_trade_visuals(fig, tvh, new_avg, buy_level, sell_level, x_left, x_right, decimals):
     shapes, annots = [], []
+    
+    # ТВХ (Зеленая сплошная)
+    if tvh and tvh > 0:
+        shapes.append(_sh(x_left, tvh, x_right, tvh, "green", dash="solid", width=2))
+        annots.append(dict(xref="x", yref="y", x=x_right, y=tvh, text=f"ТВХ: {tvh:,.{decimals}f}", showarrow=False, xanchor="right", bgcolor="rgba(38, 166, 154, 0.9)", font=dict(color="white", size=10)))
+        
+    # Новое ТВХ (Зеленая пунктирная)
+    if new_avg and new_avg > 0:
+        dash_style = "dash" if new_avg != tvh else "dot"
+        shapes.append(_sh(x_left, new_avg, x_right, new_avg, "green", dash=dash_style, width=2))
+        annots.append(dict(xref="x", yref="y", x=x_right, y=new_avg, text=f"Новое ТВХ: {new_avg:,.{decimals}f}", showarrow=False, xanchor="right", bgcolor="rgba(76, 175, 80, 0.9)", font=dict(color="white", size=10)))
+        
+    # Уровень покупок (Фиолетовая)
     if buy_level and buy_level > 0:
-        shapes.append(_sh(x_left, buy_level, x_right, buy_level, "green", dash="dash", width=2))
-        annots.append(dict(xref="x", yref="y", x=x_right, y=buy_level, text=f"Уровень покупок: {buy_level:,.{decimals}f}", showarrow=False, xanchor="right", bgcolor="rgba(25, 135, 84, 0.9)", font=dict(color="white", size=10)))
+        shapes.append(_sh(x_left, buy_level, x_right, buy_level, "purple", dash="dash", width=2))
+        annots.append(dict(xref="x", yref="y", x=x_right, y=buy_level, text=f"Уровень покупок: {buy_level:,.{decimals}f}", showarrow=False, xanchor="right", bgcolor="rgba(123, 31, 162, 0.9)", font=dict(color="white", size=10)))
+        
+    # Уровень продаж (Розовая)
     if sell_level and sell_level > 0:
-        shapes.append(_sh(x_left, sell_level, x_right, sell_level, "red", dash="dash", width=2))
-        annots.append(dict(xref="x", yref="y", x=x_right, y=sell_level, text=f"Уровень продаж: {sell_level:,.{decimals}f}", showarrow=False, xanchor="right", bgcolor="rgba(220, 53, 69, 0.9)", font=dict(color="white", size=10)))
+        shapes.append(_sh(x_left, sell_level, x_right, sell_level, "pink", dash="dash", width=2))
+        annots.append(dict(xref="x", yref="y", x=x_right, y=sell_level, text=f"Уровень продаж: {sell_level:,.{decimals}f}", showarrow=False, xanchor="right", bgcolor="rgba(233, 30, 99, 0.9)", font=dict(color="white", size=10)))
+        
     _add_shapes(fig, shapes)
     _add_annots(fig, annots)
 
