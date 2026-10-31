@@ -30,9 +30,14 @@ CSS = """
 
   div[data-testid="stPlotlyChart"]{background:#FFFFFF;border-radius:10px;}
 
-  /* --- Скрываем текст в загрузчике файлов, оставляем только кнопку --- */
+  /* --- БЕЗОПАСНОЕ СКРЫТИЕ ТЕКСТА (без display: none) --- */
   [data-testid="stFileUploaderDropzoneInstructions"] {
-      display: none !important;
+      visibility: hidden !important;
+      height: 0px !important;
+      min-height: 0px !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      overflow: hidden !important;
   }
   
   [data-testid="stFileUploaderDropzone"] {
