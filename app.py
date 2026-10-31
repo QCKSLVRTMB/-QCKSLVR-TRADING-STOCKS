@@ -153,24 +153,44 @@ def _parse_w_any(xls: pd.ExcelFile) -> dict:
         if direction in _W_ALIASES: result[ticker] = _W_ALIASES[direction]
     return result
 
-def _parse_portfolio_any(df_raw: pd.DataFrame) -> tuple[list[dict], float]:
+def _parse_portfolio_any(df_raw: pd.DataFrame, df_stocks: pd.DataFrame) -> tuple[list[dict], float]:
     if df_raw is None or df_raw.empty: return [], 0.0
     
     cols = {str(c).strip().lower(): c for c in df_raw.columns}
-    t_col = next((c for k, c in cols.items() if 'тикер' in k), None)
-    p_col = next((c for k, c in cols.items() if 'твх' in k or 'средн' in k or 'цена входа' in k), None)
-    q_col = next((c for k, c in cols.items() if 'колич' in k or 'лотов' in k), None)
     
-    if not all([t_col, p_col, q_col]): return [], 0.0
+    t_candidates = [c for k, c in cols.items() if 'тикер' in k]
+    p_candidates = [c for k, c in cols.items() if 'твх' in k or 'средн' in k or 'цена входа' in k]
+    q_candidates = [c for k, c in cols.items() if 'лотов' in k or 'колич' in k or 'кол-во' in k]
+    
+    if not t_candidates or not p_candidates or not q_candidates: 
+        return [], 0.0
         
+    t_col = t_candidates[0]
+    p_col = p_candidates[0]
+    
+    # Ищем колонку с количеством, в которой больше всего непустых данных (чисел)
+    q_col = q_candidates[0]
+    max_valid = -1
+    for cand in q_candidates:
+        valid_count = pd.to_numeric(df_raw[cand], errors='coerce').notna().sum()
+        if valid_count > max_valid:
+            max_valid = valid_count
+            q_col = cand
+            
+    valid_tickers = set(df_stocks["SECID"].tolist()) if df_stocks is not None and not df_stocks.empty else set()
+    
     records = []
     for _, r in df_raw.iterrows():
         t = str(r[t_col]).strip().upper()
-        if not _TICKER_RE.match(t) or t in {'ТИКЕР', 'TICKER', 'NAN', '-'}: continue
+        if not _TICKER_RE.match(t): continue
+        if t in {'ТИКЕР', 'TICKER', 'NAN', '-'}: continue
+        if valid_tickers and t not in valid_tickers: continue
+        
         try:
             p = float(str(r[p_col]).replace(',', '.'))
             q = int(float(str(r[q_col]).replace(',', '.')))
         except (ValueError, TypeError): continue
+        
         if p <= 0 or q <= 0: continue
         records.append({"Тикер": t, "ТВХ": p, "Лотов": q})
         
@@ -178,7 +198,7 @@ def _parse_portfolio_any(df_raw: pd.DataFrame) -> tuple[list[dict], float]:
     cash_val = 0.0
     for _, row in df_raw.iterrows():
         row_str = [str(x).strip().lower() for x in row.values]
-        if any(s == "рубли" or "кеш" in s or "cash" in s for s in row_str):
+        if any(s == "рубли" or s == "рубль" or "кеш" in s or "cash" in s for s in row_str):
             for cell in row.values:
                 try:
                     val = float(str(cell).replace(',', '.'))
@@ -197,8 +217,9 @@ with st.sidebar:
     st.header("Настройки")
     st.text_input("Экстремум", value=G["extreme_date"], key="sb_extreme", on_change=_sync_extreme)
     st.number_input("Ставка ЦБ, %", value=float(G["cb_rate"]), step=0.25, format="%.2f", key="sb_cb", on_change=_sync, args=("sb_cb", "cb_rate"))
-    # Депозит убран из сайдбара по просьбе
     st.number_input("Резерв кэша, %", value=float(G["cash_reserve"]), step=1.0, key="sb_cash", on_change=_sync, args=("sb_cash", "cash_reserve"))
+    
+    st.checkbox("Мобильный вид", value=G.get("mobile_view", False), key="sb_mobile", on_change=_sync, args=("sb_mobile", "mobile_view"))
 
     st.divider()
     st.header("Импорт / Экспорт")
@@ -251,11 +272,12 @@ with st.sidebar:
         if st.session_state.get("_port_hash") != _h:
             try:
                 df_raw = pd.read_excel(port_file)
-                records, cash = _parse_portfolio_any(df_raw)
+                records, cash = _parse_portfolio_any(df_raw, df_stocks)
                 if records:
                     state.set_global("portfolio_data", records)
                     state.set_global("portfolio_cash_file", cash)
-                    state.set_global("portfolio_cash", cash) # Перезаписываем UI кеш при новой загрузке
+                    state.set_global("portfolio_cash", cash) 
+                    st.session_state["ui_cash"] = cash # Синхронизация виджета
                     st.session_state["_port_hash"] = _h
                     st.success(f"Портфель загружен: {len(records)} позиций, кеш {cash:,.0f} ₽")
                     state.autosave()
