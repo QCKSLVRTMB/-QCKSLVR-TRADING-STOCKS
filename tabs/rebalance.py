@@ -36,7 +36,6 @@ def render_rebalance():
         score_map = dict(zip(df_ranked["SECID"], df_ranked["total_score"]))
         name_map = dict(zip(df_ranked["SECID"], df_ranked["SHORTNAME"]))
 
-    # --- Расчет стоимости акций ---
     positions = state.g("portfolio_data", [])
     cash = state.g("portfolio_cash", 0.0)
     
@@ -75,15 +74,21 @@ def render_rebalance():
     if total_pct > 100.0:
         st.warning(f"⚠️ Сумма долей секторов равна {total_pct}%. Рекомендуется, чтобы сумма не превышала 100%.")
 
-    # ============================================================
-    # 2. ДОБАВЛЕНИЕ ТИКЕРОВ
-    # ============================================================
     st.markdown("### 2. Выбор активов (тикеров)")
-    st.caption("Введите тикеры для каждого сектора.")
+    st.caption("Тикеры подтягиваются автоматически на основе секторов из загруженного портфеля.")
 
     all_tickers = sorted(df_stocks["SECID"].unique().tolist())
+    
     if "rebal_tickers" not in st.session_state:
         st.session_state["rebal_tickers"] = {}
+        
+    if not any(st.session_state["rebal_tickers"].values()):
+        for p in positions:
+            sec = p.get("Сектор", "Разное")
+            if sec not in st.session_state["rebal_tickers"]:
+                st.session_state["rebal_tickers"][sec] = []
+            if p["Тикер"] not in st.session_state["rebal_tickers"][sec]:
+                st.session_state["rebal_tickers"][sec].append(p["Тикер"])
 
     for _, row in edited_sectors.iterrows():
         sector = row["Сектор"]
@@ -103,9 +108,6 @@ def render_rebalance():
         )
         st.session_state["rebal_tickers"][sector] = selected
 
-    # ============================================================
-    # 3. РАСЧЕТ
-    # ============================================================
     st.markdown("### 3. Итоговая таблица ребалансировки")
     
     table_rows = []
@@ -144,7 +146,6 @@ def render_rebalance():
                 "Доля в портфеле, %": share_in_portfolio,
             })
 
-    # --- Сохраняем суммы для вкладки Портфель ---
     planned_amounts = {}
     for r in table_rows:
         planned_amounts[r["Тикер"]] = r["Планируемая сумма, ₽"]
