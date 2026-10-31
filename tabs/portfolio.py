@@ -10,35 +10,56 @@ def render_portfolio(df_stocks: pd.DataFrame):
 
     port_data = state.g("portfolio_data", [])
     if not port_data:
-        st.info("**Портфель**\n\nЗагрузите Excel-файл портфеля в боковом меню.")
+        st.info("📁 **Портфель**\n\nЗагрузите Excel-файл портфеля в боковом меню.")
         return
 
     df_port = pd.DataFrame(port_data)
     
-    # --- Поле Кеш ---
-    def _sync_cash():
-        state.set_global("portfolio_cash", st.session_state["ui_cash"])
+    stocks_value = 0.0
+    for p in port_data:
+        inst = get_instrument(p["Тикер"], df_stocks)
+        lot_size = inst.lot_size if inst.lot_size > 0 else 1
+        stocks_value += p["ТВХ"] * p["Лотов"] * lot_size
+
+    def _sync_cash_pct():
+        pct = st.session_state["ui_cash_pct"]
+        total = stocks_value / (1 - pct/100) if pct < 100 else stocks_value
+        cash = total - stocks_value
+        st.session_state["ui_cash_rub"] = float(max(0, cash))
+        state.set_global("portfolio_cash_pct", pct)
+        state.set_global("portfolio_cash", cash)
         state.autosave()
 
-    c1, c2 = st.columns([1, 2])
+    def _sync_cash_rub():
+        cash = st.session_state["ui_cash_rub"]
+        total = stocks_value + cash
+        pct = (cash / total * 100) if total > 0 else 0
+        st.session_state["ui_cash_pct"] = float(pct)
+        state.set_global("portfolio_cash_pct", pct)
+        state.set_global("portfolio_cash", cash)
+        state.autosave()
+
+    if "ui_cash_pct" not in st.session_state:
+        file_cash = state.g("portfolio_cash_file", 0.0)
+        total = stocks_value + file_cash
+        pct = (file_cash / total * 100) if total > 0 else 20.0
+        st.session_state["ui_cash_pct"] = float(pct)
+        st.session_state["ui_cash_rub"] = float(file_cash)
+        
+    st.markdown("#### Баланс счета")
+    c1, c2 = st.columns(2)
     with c1:
-        if "ui_cash" not in st.session_state:
-            st.session_state["ui_cash"] = float(state.g("portfolio_cash", 0.0))
-            
         st.number_input(
-            "Кеш на счету (Рубли)", 
+            "Кеш (Рубли)", 
             value=float(state.g("portfolio_cash", 0.0)), 
-            step=1000.0, 
-            format="%.2f",
-            key="ui_cash",
-            on_change=_sync_cash
+            step=1000.0, format="%.2f", key="ui_cash_rub", on_change=_sync_cash_rub
         )
     with c2:
-        file_cash = state.g("portfolio_cash_file", 0.0)
-        st.write("") # отступ
-        st.write("") # отступ
-        if file_cash > 0:
-            st.caption(f"Справочно из файла: **{file_cash:,.2f} ₽**")
+        st.number_input(
+            "Кеш (%)", 
+            value=float(state.g("portfolio_cash_pct", 20.0)), 
+            step=1.0, format="%.1f", key="ui_cash_pct", on_change=_sync_cash_pct
+        )
 
     tickers = df_port["Тикер"].tolist()
     with st.spinner("Загрузка дивидендов..."):
@@ -70,7 +91,7 @@ def render_portfolio(df_stocks: pd.DataFrame):
         div_12m = divs_data.get(t, {}).get("div_12m", 0.0)
         div_yield_tvh = (div_12m / avg_price * 100) if avg_price > 0 else 0.0
         
-        # --- Новые расчеты ---
+        # Дивиденды по тикерам из файла
         fut_div_per_share = future_divs.get(t, 0.0)
         gross_div = fut_div_per_share * shares
         net_div = gross_div * (1 - 0.13)
@@ -98,6 +119,7 @@ def render_portfolio(df_stocks: pd.DataFrame):
         rows.append({
             "Тикер": t,
             "Название": inst.name,
+            "Сектор": r.get("Сектор", "Разное"),
             "Лотов": lots,
             "ТВХ": avg_price,
             "Цена": current_price,
@@ -126,7 +148,6 @@ def render_portfolio(df_stocks: pd.DataFrame):
             styles[6] = "color: #F44336; font-weight: bold;"
             styles[7] = "color: #F44336; font-weight: bold;"
             
-        # Стилизация Действия
         act = row["Действие"]
         act_idx = row.index.get_loc("Действие")
         if "Купить" in act:
@@ -137,7 +158,7 @@ def render_portfolio(df_stocks: pd.DataFrame):
         return styles
 
     display_df = df_res[[
-        "Тикер", "Название", "Лотов", "ТВХ", "Цена", 
+        "Тикер", "Название", "Сектор", "Лотов", "ТВХ", "Цена", 
         "Стоимость", "P/L ₽", "P/L %", 
         "Див 12м", "Див брутто", "Див нетто", 
         "Цель лотов", "Лотов по дох.", "Действие"
