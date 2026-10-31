@@ -62,6 +62,29 @@ def render_portfolio(df_stocks: pd.DataFrame):
             step=1.0, format="%.1f", key="ui_cash_pct", on_change=_sync_cash_pct
         )
 
+    # --- Новый блок: сравнение с целевым резервом из бокового меню ---
+    target_cash_pct = float(state.g("cash_reserve", 20.0))
+    current_cash_pct = float(state.g("portfolio_cash_pct", 0.0))
+    
+    if target_cash_pct > 0:
+        fill_pct = (current_cash_pct / target_cash_pct) * 100
+        diff_pct = current_cash_pct - target_cash_pct
+        
+        st.caption(
+            f"Текущий кеш составляет **{current_cash_pct:.1f}%** от портфеля. "
+            f"Целевой уровень (из бокового меню): **{target_cash_pct:.1f}%**. "
+            f"Заполнено: **{fill_pct:.1f}%** от нормы."
+        )
+        
+        # Прогресс-бар (обрезаем на 100% для отображения, если кеша больше нормы)
+        st.progress(min(max(fill_pct / 100, 0.0), 1.0))
+        
+        if diff_pct < -0.1:
+            st.info(f"Справочно: для достижения нормы {target_cash_pct:.1f}% необходимо добавить {abs(diff_pct):.1f}% кеша (уменьшив долю акций).")
+        elif diff_pct > 0.1:
+            st.warning(f"Справочно: кеш превышает норму на {diff_pct:.1f}%.")
+    # ------------------------------------------------------------------
+
     tickers = df_port["Тикер"].tolist()
     with st.spinner("Загрузка дивидендов..."):
         divs_data = fetch_many_dividends(tickers)
