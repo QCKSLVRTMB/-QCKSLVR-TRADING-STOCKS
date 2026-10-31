@@ -101,7 +101,17 @@ def render_portfolio(df_stocks: pd.DataFrame):
         gross_div = fut_div_per_share * shares
         net_div = gross_div * (1 - 0.13)
         
-        # 3. Расчет лотов (все целые числа)
+        # 3. Вид актива (как в Рейтинге, но для портфеля)
+        if div_yield_tvh > cb_rate and pl_pct > 0:
+            asset_color = "green"
+        elif div_yield_tvh > cb_rate and pl_pct <= 0:
+            asset_color = "yellow"
+        elif div_yield_tvh == 0 and pl_pct > 0:
+            asset_color = "orange"
+        else:
+            asset_color = "red"
+        
+        # 4. Расчет лотов (все целые числа)
         target_amount = planned_amounts.get(t, 0.0)
         tvh_safe = avg_price if avg_price > 0 else current_price
         
@@ -129,6 +139,7 @@ def render_portfolio(df_stocks: pd.DataFrame):
         rows.append({
             "Название": inst.name,
             "Тикер": t,
+            "Вид актива": asset_color,
             "Рыночная цена": current_price,
             "ТВХ": avg_price,
             "Лотов": lots,
@@ -149,24 +160,30 @@ def render_portfolio(df_stocks: pd.DataFrame):
     def style_pl(row):
         styles = [""] * len(row)
         
-        # Индексы колонок: Прибыль (5), P/L % (6), Действия (12)
+        # Индексы: Вид актива (2), Прибыль (6), P/L % (7), Действия (13)
+        color = row["Вид актива"]
+        if color == "green":   styles[2] = "background-color: #4CAF50; color: #4CAF50;"
+        elif color == "yellow": styles[2] = "background-color: #FFEB3B; color: #FFEB3B;"
+        elif color == "orange": styles[2] = "background-color: #FF9800; color: #FF9800;"
+        elif color == "red":    styles[2] = "background-color: #F44336; color: #F44336;"
+        
         if row["Прибыль или убыток"] > 0:
-            styles[5] = "color: #4CAF50; font-weight: bold;"
             styles[6] = "color: #4CAF50; font-weight: bold;"
+            styles[7] = "color: #4CAF50; font-weight: bold;"
         elif row["Прибыль или убыток"] < 0:
-            styles[5] = "color: #F44336; font-weight: bold;"
             styles[6] = "color: #F44336; font-weight: bold;"
+            styles[7] = "color: #F44336; font-weight: bold;"
             
         act = row["Действия"]
         if "Купить" in act:
-            styles[12] = "background-color: #C8E6C9; color: #1B5E20; font-weight: bold;"
+            styles[13] = "background-color: #C8E6C9; color: #1B5E20; font-weight: bold;"
         elif "Продать" in act:
-            styles[12] = "background-color: #FFCDD2; color: #B71C1C; font-weight: bold;"
+            styles[13] = "background-color: #FFCDD2; color: #B71C1C; font-weight: bold;"
             
         return styles
 
     display_df = df_res[[
-        "Название", "Тикер", "Рыночная цена", "ТВХ", "Лотов",
+        "Название", "Тикер", "Вид актива", "Рыночная цена", "ТВХ", "Лотов",
         "Прибыль или убыток", "P/L %", 
         "Дивиденды за 12 мес.", "Див брутто", "Див нетто", 
         "Доступно лотов", "Лотов по доходности", "Действия"
@@ -176,6 +193,7 @@ def render_portfolio(df_stocks: pd.DataFrame):
         display_df.style
         .apply(style_pl, axis=1)
         .format({
+            "Вид актива": lambda x: "",
             "Рыночная цена": "{:.2f}",
             "ТВХ": "{:.2f}",
             "Лотов": "{:.0f}",
