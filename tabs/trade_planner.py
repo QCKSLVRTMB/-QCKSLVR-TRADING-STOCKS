@@ -67,10 +67,14 @@ def render_trade_planner(ticker: str, df_stocks: pd.DataFrame):
     st.markdown("#### Расчет усреднения (ТВХ)")
     if "entries" not in tdata: tdata["entries"] = []
     
-    port_data = state.g("portfolio_data", {}).get(ticker, {})
+    # --- ИСПРАВЛЕНИЕ: Портфель теперь список словарей, ищем нужный элемент ---
+    portfolio_data_list = state.g("portfolio_data", [])
+    port_item = next((p for p in portfolio_data_list if p.get("Тикер") == ticker), None)
+    
     rows = []
-    if port_data:
-        rows.append({"Цена": port_data["avg_price"], "Лотов": port_data["lots"], "Комментарий": "Из портфеля", "Lock": True})
+    if port_item:
+        rows.append({"Цена": port_item["ТВХ"], "Лотов": port_item["Лотов"], "Комментарий": "Из портфеля", "Lock": True})
+        
     for e in tdata["entries"]:
         rows.append({"Цена": e["price"], "Лотов": e["qty"], "Комментарий": e.get("note", ""), "Lock": False})
         
@@ -84,7 +88,7 @@ def render_trade_planner(ticker: str, df_stocks: pd.DataFrame):
             "Комментарий": st.column_config.TextColumn(),
             "Lock": None
         },
-        disabled=["Цена", "Лотов"] if port_data else []
+        disabled=["Цена", "Лотов"] if port_item else []
     )
     
     if not edited.empty and "Цена" in edited.columns and "Лотов" in edited.columns:
@@ -171,7 +175,6 @@ def render_trade_planner(ticker: str, df_stocks: pd.DataFrame):
 def _render_tf_chart(ticker, tf_name, cfg, inst, tdata, mobile, buy_level, sell_level, clusters_data, custom_clusters_data):
     chart_data = tdata["charts"][tf_name]
 
-    # Возвращаем канал на D1
     if tf_name == "W": available_tools = ["channel", "fib_w", "cluster_range"]
     elif tf_name == "D1": available_tools = ["channel", "zigzag", "fib_d1"]
     else: available_tools = ["zigzag", "fib_h1"]
