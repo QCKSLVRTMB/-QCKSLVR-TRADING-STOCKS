@@ -4,8 +4,9 @@ from datetime import datetime
 import pandas as pd
 import re
 import hashlib
+from pathlib import Path
 from core import state, storage
-from core.config import APP_TITLE, DEFAULT_W_FORMATIONS
+from core.config import APP_TITLE
 from core.market import fetch_moex_stocks
 from tabs.main_table import render_main_tab
 from tabs.indices import render_indices
@@ -21,6 +22,8 @@ inject_css()
 S = state.get_state()
 G = S["global"]
 
+df_stocks = fetch_moex_stocks()
+
 def _sync(key, gkey):
     state.set_global(gkey, st.session_state[key])
 
@@ -32,12 +35,13 @@ def _sync_extreme():
     except ValueError:
         st.error("Неверный формат даты. Используйте DD.MM.YYYY")
 
+def _file_hash(f) -> str:
+    return hashlib.md5(f.getvalue()).hexdigest()
 
 # ============================================================
 # Excel-парсеры
 # ============================================================
 _TICKER_RE = re.compile(r'^[A-ZА-Я0-9]{1,10}$')
-
 _W_ALIASES = {
     "вверх": "вверх", "up": "вверх", "рост": "вверх",
     "вниз":  "вниз",  "down": "вниз", "падение": "вниз",
@@ -106,7 +110,7 @@ def _parse_dsi(df_dsi, name_index: dict) -> dict:
     dsi_dict = {}
     if df_dsi is None or df_dsi.empty: return dsi_dict
     col_name = next((c for c in df_dsi.columns if 'Акция' in str(c)), None)
-    col_dsi = next((c for c in df_dsi.columns if 'DSI' in str(c)), None)
+    col_dsi  = next((c for c in df_dsi.columns if 'DSI' in str(c)), None)
     if not col_name or not col_dsi: return dsi_dict
     for _, row in df_dsi.iterrows():
         name = row[col_name]
@@ -119,8 +123,7 @@ def _parse_dsi(df_dsi, name_index: dict) -> dict:
     return dsi_dict
 
 def _parse_w_any(xls: pd.ExcelFile) -> dict:
-    if 'W-формации' not in xls.sheet_names:
-        return {}
+    if 'W-формации' not in xls.sheet_names: return {}
     df_w = pd.read_excel(xls, sheet_name='W-формации', header=None)
     direction_idx = None
     for i in range(df_w.shape[1]):
@@ -142,10 +145,12 @@ def _parse_w_any(xls: pd.ExcelFile) -> dict:
     return result
 
 def _parse_portfolio_any(df_raw: pd.DataFrame) -> list[dict]:
+    """Ищет нужные колонки и возвращает чистый список для интерфейса Портфеля."""
     if df_raw is None or df_raw.empty: return []
+    
     cols = {str(c).strip().lower(): c for c in df_raw.columns}
     t_col = next((c for k, c in cols.items() if 'тикер' in k), None)
-    p_col = next((c for k, c in cols.items() if 'твх' in k or 'средн' in k or 'цена входа' in k or 'цена покупки' in k), None)
+    p_col = next((c for k, c in cols.items() if 'твх' in k or 'средн' in k or 'цена входа' in k), None)
     q_col = next((c for k, c in cols.items() if 'колич' in k or 'лотов' in k), None)
     
     if not all([t_col, p_col, q_col]): return []
@@ -153,7 +158,7 @@ def _parse_portfolio_any(df_raw: pd.DataFrame) -> list[dict]:
     records = []
     for _, r in df_raw.iterrows():
         t = str(r[t_col]).strip().upper()
-        if not _TICKER_RE.match(t) or t in {'ТИКЕР', 'TICKER', 'NAN'}: continue
+        if not _TICKER_RE.match(t) or t in {'ТИКЕР', 'TICKER', 'NAN', '-'}: continue
         try:
             p = float(str(r[p_col]).replace(',', '.'))
             q = int(float(str(r[q_col]).replace(',', '.')))
@@ -161,9 +166,6 @@ def _parse_portfolio_any(df_raw: pd.DataFrame) -> list[dict]:
         if p <= 0 or q <= 0: continue
         records.append({"Тикер": t, "ТВХ": p, "Лотов": q})
     return records
-
-def _file_hash(f) -> str:
-    return hashlib.md5(f.getvalue()).hexdigest()
 
 # ============================================================
 # Сайдбар
@@ -178,6 +180,7 @@ with st.sidebar:
     st.divider()
     st.header("Импорт / Экспорт")
 
+    # W-формации
     w_file = st.file_uploader("Импорт W-формаций", type=["xlsx", "xls"], key="upl_w")
     if w_file is not None:
         _h = _file_hash(w_file)
@@ -194,6 +197,7 @@ with st.sidebar:
                     st.error("Не найдены направления.")
             except Exception as e: st.error(f"Ошибка: {e}")
 
+    # Источники
     sources_file = st.file_uploader("Импорт Источников", type=["xlsx", "xls"], key="upl_src")
     if sources_file is not None:
         _h = _file_hash(sources_file)
@@ -217,7 +221,8 @@ with st.sidebar:
                     st.error("Загружено 0 записей.")
             except Exception as e: st.error(f"Ошибка: {e}")
 
-    port_file = st.file_uploader("Импорт Портфеля (Excel)", type=["xlsx", "xls"], key="upl_port")
+    # Портфель
+    port_file = st.file_uploader("Импорт Портфеля", type=["xlsx", "xls"], key="upl_port")
     if port_file is not None:
         _h = _file_hash(port_file)
         if st.session_state.get("_port_hash") != _h:
@@ -237,7 +242,7 @@ with st.sidebar:
         st.session_state["_export_blob"] = storage.dumps(S)
     blob = st.session_state.get("_export_blob")
     if blob:
-        st.download_button("Скачать JSON", data=blob, file_name=f"backup.json", mime="application/json")
+        st.download_button("Скачать JSON", data=blob, file_name="backup.json", mime="application/json")
 
     json_file = st.file_uploader("Импорт JSON", type=["json"])
     if json_file and st.button("Применить бэкап"):
@@ -245,16 +250,6 @@ with st.sidebar:
         if parsed:
             state.replace_state(parsed)
             st.success("Загружено!"); st.rerun()
-
-# ============================================================
-# Загрузка данных (с защитой от зависания)
-# ============================================================
-with st.spinner("Загрузка данных с MOEX..."):
-    df_stocks = fetch_moex_stocks()
-
-if df_stocks.empty:
-    st.error("⚠️ Не удалось загрузить данные с MOEX ISS. Проверьте соединение или обновите страницу.")
-    st.stop()
 
 # ============================================================
 # Вкладки
