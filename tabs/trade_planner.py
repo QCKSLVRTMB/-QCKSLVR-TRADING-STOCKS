@@ -7,7 +7,7 @@ from datetime import datetime
 from core import charts, state
 from core.calc import get_instrument, calculate_volume_profile, get_volume_colors
 from core.config import INTERVALS, TOOLS
-from core.market import fetch_moex_candles
+from core.market import fetch_moex_candles, fetch_dividends_dohod
 from ui.theme import seg
 
 def snap_points(pts, df):
@@ -48,12 +48,42 @@ def render_trade_planner(ticker: str, df_stocks: pd.DataFrame):
     tdata = state.ticker(ticker)
     mobile = state.g("mobile_view")
     
+    # Получаем данные портфеля для этого тикера
+    portfolio_data_list = state.g("portfolio_data", [])
+    port_item = next((p for p in portfolio_data_list if p.get("Тикер") == ticker), None)
+    
+    # Загружаем дивиденды за 12 месяцев (dohod.ru)
+    with st.spinner("Загрузка дивидендов..."):
+        divs = fetch_dividends_dohod(ticker)
+    div_12m = divs.get("div_12m", 0.0)
+    
     st.subheader(f"{ticker} — {inst.name}")
+    
+    # Текущие метрики
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Цена", f"{inst.price:.2f} ₽", f"{inst.change_pct:+.2f}%" if hasattr(inst, 'change_pct') else None)
     c2.metric("Лот", f"{inst.lot_size} шт.")
     c3.metric("Стоимость лота", f"{inst.lot_value:.2f} ₽")
     c4.metric("Листинг", f"{inst.list_level} ур.")
+    
+    st.markdown("#### Текущие метрики (из портфеля)")
+    m1, m2, m3, m4 = st.columns(4)
+    
+    if port_item:
+        tvh = float(port_item["ТВХ"])
+        lots = int(port_item["Лотов"])
+        pl_pct = (inst.price / tvh - 1) * 100 if tvh > 0 else 0.0
+        yield_tvh = (div_12m / tvh * 100) if tvh > 0 else 0.0
+    else:
+        tvh, lots = 0.0, 0
+        pl_pct, yield_tvh = 0.0, 0.0
+        
+    yield_market = (div_12m / inst.price * 100) if inst.price > 0 else 0.0
+    
+    m1.metric("P/L (курсовая)", f"{pl_pct:+.2f}%" if port_item else "—")
+    m2.metric("Див. доходность (по рынку)", f"{yield_market:.2f}%" if div_12m > 0 else "—")
+    m3.metric("Див. доходность (по ТВХ)", f"{yield_tvh:.2f}%" if (div_12m > 0 and port_item) else "—")
+    m4.metric("Выплата на акцию (12м)", f"{div_12m:.2f} ₽" if div_12m > 0 else "—")
 
     st.markdown("#### Параметры сделки")
     c_sl, c_tp = st.columns(2)
@@ -67,10 +97,6 @@ def render_trade_planner(ticker: str, df_stocks: pd.DataFrame):
     st.markdown("#### Расчет усреднения (ТВХ)")
     if "entries" not in tdata: tdata["entries"] = []
     
-    # --- Портфель теперь список словарей, ищем нужный элемент ---
-    portfolio_data_list = state.g("portfolio_data", [])
-    port_item = next((p for p in portfolio_data_list if p.get("Тикер") == ticker), None)
-    
     rows = []
     if port_item:
         rows.append({"Цена": port_item["ТВХ"], "Лотов": port_item["Лотов"], "Комментарий": "Из портфеля", "Lock": True})
@@ -80,6 +106,7 @@ def render_trade_planner(ticker: str, df_stocks: pd.DataFrame):
         
     df_entries = pd.DataFrame(rows) if rows else pd.DataFrame(columns=["Цена", "Лотов", "Комментарий", "Lock"])
     
+    # Убрали disabled, чтобы можно было редактировать новые строки
     edited = st.data_editor(
         df_entries, num_rows="dynamic", use_container_width=True, hide_index=True,
         column_config={
@@ -87,13 +114,12 @@ def render_trade_planner(ticker: str, df_stocks: pd.DataFrame):
             "Лотов": st.column_config.NumberColumn(step=1),
             "Комментарий": st.column_config.TextColumn(),
             "Lock": None
-        },
-        disabled=["Цена", "Лотов"] if port_item else []
+        }
     )
     
     if not edited.empty and "Цена" in edited.columns and "Лотов" in edited.columns:
         tdata["entries"] = []
-        # Безопасный парсинг строк (защита от NaN при клике на новую строку)
+        # Безопасный парсинг строк
         for _, r in edited.iterrows():
             if r.get("Lock") == True:
                 continue
@@ -117,13 +143,18 @@ def render_trade_planner(ticker: str, df_stocks: pd.DataFrame):
         
         if total_lots > 0:
             avg_price = total_cost / (total_lots * inst.lot_size)
-            st.metric("Средняя цена (ТВХ)", f"{avg_price:.2f} ₽")
             
-            m1, m2 = st.columns(2)
+            st.markdown("##### Результат усреднения")
+            r1, r2, r3 = st.columns(3)
+            r1.metric("Средняя цена (ТВХ)", f"{avg_price:.2f} ₽")
+            
+            new_yield = (div_12m / avg_price * 100) if (avg_price > 0 and div_12m > 0) else 0.0
+            r2.metric("Див. доходность (после усреднения)", f"{new_yield:.2f}%")
+            
             if sell_level > 0:
-                m1.metric("Доходность до продажи", f"{(sell_level / avg_price - 1) * 100:.2f}%")
-            if buy_level > 0:
-                m2.metric("Риск до покупки", f"{(1 - buy_level / avg_price) * 100:.2f}%")
+                r3.metric("Доходность до продажи", f"{(sell_level / avg_price - 1) * 100:.2f}%")
+            elif buy_level > 0:
+                r3.metric("Риск до покупки", f"{(1 - buy_level / avg_price) * 100:.2f}%")
 
     st.markdown("#### Графики рынка")
     c_tog1, c_tog2 = st.columns(2)
