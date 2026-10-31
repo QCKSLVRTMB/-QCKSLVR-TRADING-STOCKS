@@ -169,7 +169,7 @@ def render_dashboard(df_stocks: pd.DataFrame):
         future_divs_dict = state.g("future_dividends", {})
         if future_divs_dict:
             future_div_list = [
-                {"Тикер": k, "Название": "-", "Период": "-", "Дивиденд": v, "Дата закрытия": "-", "Выплата до": "-"}
+                {"Тикер": k, "Название": "-", "Период": "-", "Дивиденд": v, "Дата закрытия реестра": "-", "Выплата до...": "-"}
                 for k, v in future_divs_dict.items()
             ]
             
@@ -197,8 +197,8 @@ def render_dashboard(df_stocks: pd.DataFrame):
                 "Тикер": t,
                 "Период": d["Период"],
                 "Дивиденд, ₽": div_amt,
-                "Дата закрытия": d["Дата закрытия"],
-                "Выплата до": d["Выплата до"],
+                "Дата закрытия реестра": d.get("Дата закрытия реестра", "-"),
+                "Выплата до...": d.get("Выплата до...", "-"),
                 "Доходность по рынку, %": yield_market,
                 "Доходность портфеля, %": port_yield if in_port else "—"
             })
@@ -206,7 +206,7 @@ def render_dashboard(df_stocks: pd.DataFrame):
         df_divs = pd.DataFrame(div_rows)
         # Сортировка по дате закрытия (по возможности)
         try:
-            df_divs["_sort_date"] = pd.to_datetime(df_divs["Дата закрытия"], format="%d.%m.%Y", errors="coerce")
+            df_divs["_sort_date"] = pd.to_datetime(df_divs["Дата закрытия реестра"], format="%d.%m.%Y", errors="coerce")
             df_divs = df_divs.sort_values("_sort_date").drop(columns=["_sort_date"])
         except:
             pass
