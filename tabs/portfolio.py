@@ -10,7 +10,7 @@ def render_portfolio(df_stocks: pd.DataFrame):
 
     port_data = state.g("portfolio_data", [])
     if not port_data:
-        st.info("📁 **Портфель**\n\nЗагрузите Excel-файл портфеля в боковом меню.")
+        st.info("**Портфель**\n\nЗагрузите Excel-файл портфеля в боковом меню.")
         return
 
     df_port = pd.DataFrame(port_data)
@@ -45,6 +45,8 @@ def render_portfolio(df_stocks: pd.DataFrame):
         divs_data = fetch_many_dividends(tickers)
 
     cb_rate = state.g("cb_rate", 14.0)
+    future_divs = state.g("future_dividends", {})
+    planned_amounts = state.g("rebalance_planned_amounts", {})
     
     rows = []
     total_value = 0.0
@@ -58,16 +60,38 @@ def render_portfolio(df_stocks: pd.DataFrame):
         inst = get_instrument(t, df_stocks)
         current_price = inst.price if inst.price > 0 else avg_price
         lot_size = inst.lot_size if inst.lot_size > 0 else 1
+        shares = lots * lot_size
         
-        cost = avg_price * lots * lot_size
-        value = current_price * lots * lot_size
+        cost = avg_price * shares
+        value = current_price * shares
         pl_rub = value - cost
         pl_pct = (current_price / avg_price - 1) * 100 if avg_price > 0 else 0.0
         
         div_12m = divs_data.get(t, {}).get("div_12m", 0.0)
         div_yield_tvh = (div_12m / avg_price * 100) if avg_price > 0 else 0.0
-        rec_max_price = (div_12m / (cb_rate / 100)) if div_12m > 0 and cb_rate > 0 else 0.0
         
+        # --- Новые расчеты ---
+        fut_div_per_share = future_divs.get(t, 0.0)
+        gross_div = fut_div_per_share * shares
+        net_div = gross_div * (1 - 0.13)
+        
+        target_amount = planned_amounts.get(t, 0.0)
+        tvh_safe = avg_price if avg_price > 0 else current_price
+        target_lots = (target_amount / (tvh_safe * lot_size)) if tvh_safe > 0 else 0.0
+        
+        if div_yield_tvh > 0 and cb_rate > 0:
+            lots_by_yield = target_lots * (div_yield_tvh / cb_rate)
+            action_lots = lots_by_yield - lots
+            if action_lots > 0.1:
+                action_str = f"Купить {action_lots:.1f}"
+            elif action_lots < -0.1:
+                action_str = f"Продать {abs(action_lots):.1f}"
+            else:
+                action_str = "Держать"
+        else:
+            lots_by_yield = 0.0
+            action_str = "—"
+            
         total_value += value
         total_cost += cost
         
@@ -81,8 +105,11 @@ def render_portfolio(df_stocks: pd.DataFrame):
             "P/L ₽": pl_rub,
             "P/L %": pl_pct,
             "Див 12м": div_12m,
-            "Див.дох. к ТВХ %": div_yield_tvh,
-            "Рек. макс. цена": rec_max_price,
+            "Див брутто": gross_div,
+            "Див нетто": net_div,
+            "Цель лотов": target_lots,
+            "Лотов по дох.": lots_by_yield,
+            "Действие": action_str,
             "_lot_size": lot_size
         })
 
@@ -98,12 +125,22 @@ def render_portfolio(df_stocks: pd.DataFrame):
         elif row["P/L ₽"] < 0:
             styles[6] = "color: #F44336; font-weight: bold;"
             styles[7] = "color: #F44336; font-weight: bold;"
+            
+        # Стилизация Действия
+        act = row["Действие"]
+        act_idx = row.index.get_loc("Действие")
+        if "Купить" in act:
+            styles[act_idx] = "background-color: #C8E6C9; color: #1B5E20; font-weight: bold;"
+        elif "Продать" in act:
+            styles[act_idx] = "background-color: #FFCDD2; color: #B71C1C; font-weight: bold;"
+            
         return styles
 
     display_df = df_res[[
         "Тикер", "Название", "Лотов", "ТВХ", "Цена", 
         "Стоимость", "P/L ₽", "P/L %", 
-        "Див 12м", "Див.дох. к ТВХ %", "Рек. макс. цена"
+        "Див 12м", "Див брутто", "Див нетто", 
+        "Цель лотов", "Лотов по дох.", "Действие"
     ]].copy()
 
     styled_df = (
@@ -116,8 +153,10 @@ def render_portfolio(df_stocks: pd.DataFrame):
             "P/L ₽": "{:+,.0f}",
             "P/L %": "{:+.2f}%",
             "Див 12м": "{:.2f}",
-            "Див.дох. к ТВХ %": "{:.2f}%",
-            "Рек. макс. цена": "{:.2f}",
+            "Див брутто": "{:,.0f}",
+            "Див нетто": "{:,.0f}",
+            "Цель лотов": "{:.1f}",
+            "Лотов по дох.": "{:.1f}",
         })
     )
 
