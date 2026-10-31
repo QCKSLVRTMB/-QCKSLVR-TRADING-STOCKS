@@ -395,8 +395,10 @@ with st.sidebar:
         if parsed:
             state.replace_state(parsed)
             
-            for k in ["ui_cash_rub", "ui_cash_pct", "rebal_sectors", "rebal_tickers", "plan_ticker"]:
-                if k in st.session_state:
+            # Очищаем кэш ВСЕХ виджетов, включая multiselect (tags_*), чтобы они подтянули новые данные из JSON
+            keys_to_delete = ["ui_cash_rub", "ui_cash_pct", "rebal_sectors", "rebal_tickers", "plan_ticker"]
+            for k in list(st.session_state.keys()):
+                if k.startswith("tags_") or k in keys_to_delete:
                     del st.session_state[k]
                     
             if "rebal_sectors_data" in parsed["global"]:
