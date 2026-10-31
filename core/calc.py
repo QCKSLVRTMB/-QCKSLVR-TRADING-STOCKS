@@ -149,8 +149,8 @@ def analyze_manual_zigzag(pts, df):
     return breakouts
 
 def _anomaly_color(tf_name: str) -> str | None:
-    # H1 - младший (красный), D1 - средний (зеленый), W - старший (фиолетовый/синий)
-    return {"H1": "red", "D1": "green", "W": "blue"}.get(tf_name)
+    # H1 - младший (красный), D1 - средний (зеленый), W - старший (фиолетовый)
+    return {"H1": "red", "D1": "green", "W": "purple"}.get(tf_name)
 
 def get_volume_colors(df, tf_name, sensitivity=3.0):
     if df is None or df.empty or "Volume" not in df.columns: return []
