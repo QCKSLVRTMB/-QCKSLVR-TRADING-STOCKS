@@ -394,10 +394,16 @@ with st.sidebar:
         parsed = storage.loads(json_file.getvalue().decode("utf-8"))
         if parsed:
             state.replace_state(parsed)
+            
+            for k in ["ui_cash_rub", "ui_cash_pct", "rebal_sectors", "rebal_tickers", "plan_ticker"]:
+                if k in st.session_state:
+                    del st.session_state[k]
+                    
             if "rebal_sectors_data" in parsed["global"]:
                 st.session_state["rebal_sectors"] = pd.DataFrame(parsed["global"]["rebal_sectors_data"])
             if "rebal_tickers_data" in parsed["global"]:
                 st.session_state["rebal_tickers"] = parsed["global"]["rebal_tickers_data"]
+                
             st.success("Загружено!")
             st.rerun()
 
@@ -436,10 +442,7 @@ with tab_calc:
     active_tickers = G.get("active_tickers", [])
     portfolio_data = G.get("portfolio_data", [])
     
-    # Объединяем тикеры из Обзора и из Портфеля
     portfolio_tickers = [p["Тикер"] for p in portfolio_data if "Тикер" in p]
-    
-    # dict.fromkeys убирает дубликаты, сохраняя порядок
     all_tickers = list(dict.fromkeys(active_tickers + portfolio_tickers))
     
     if not all_tickers:
