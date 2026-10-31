@@ -10,18 +10,32 @@ def render_portfolio(df_stocks: pd.DataFrame):
 
     port_data = state.g("portfolio_data", [])
     if not port_data:
-        st.info(
-            "📁 **Портфель**\n\n"
-            "Загрузите Excel-файл портфеля в боковом меню.\n\n"
-            "В файле достаточно трёх колонок:\n"
-            "- **Тикер** (например LKOH)\n"
-            "- **ТВХ** (или «Средняя цена»)\n"
-            "- **Количество лотов** (или «Лотов»)"
-        )
+        st.info("📁 **Портфель**\n\nЗагрузите Excel-файл портфеля в боковом меню.")
         return
 
     df_port = pd.DataFrame(port_data)
     
+    # --- Поле Кеш ---
+    c1, c2 = st.columns([1, 2])
+    with c1:
+        current_cash = st.number_input(
+            "Кеш на счету (Рубли)", 
+            value=float(state.g("portfolio_cash", 0.0)), 
+            step=1000.0, 
+            format="%.2f",
+            key="ui_cash"
+        )
+        if current_cash != state.g("portfolio_cash"):
+            state.set_global("portfolio_cash", current_cash)
+            state.autosave()
+            
+    with c2:
+        file_cash = state.g("portfolio_cash_file", 0.0)
+        st.write("") # отступ
+        st.write("") # отступ
+        if file_cash > 0:
+            st.caption(f"Справочно из файла: **{file_cash:,.2f} ₽**")
+
     tickers = df_port["Тикер"].tolist()
     with st.spinner("Загрузка дивидендов..."):
         divs_data = fetch_many_dividends(tickers)
@@ -112,91 +126,7 @@ def render_portfolio(df_stocks: pd.DataFrame):
 
     st.caption(
         f"Всего позиций: **{len(df_res)}** · "
-        f"Стоимость: **{total_value:,.0f} ₽** · "
+        f"Стоимость акций: **{total_value:,.0f} ₽** · "
         f"Вложено: **{total_cost:,.0f} ₽** · "
         f"Общий P/L: **{total_value - total_cost:+,.0f} ₽**"
     )
-
-    # ---------------- Калькулятор усреднения ----------------
-    st.markdown("---")
-    st.markdown("### 🧮 Калькулятор усреднения позиции")
-
-    tickers = df_res["Тикер"].tolist()
-    
-    sel_ticker = st.selectbox(
-        "Актив из портфеля",
-        tickers,
-        key="avg_ticker",
-        help="Выберите позицию — ТВХ и количество лотов подставятся автоматически.",
-    )
-
-    row = df_res[df_res["Тикер"] == sel_ticker].iloc[0]
-    old_avg = row["ТВХ"]
-    old_lots = row["Лотов"]
-    current_price = row["Цена"]
-    lot_size = row["_lot_size"]
-    decimals = 2 if current_price > 1 else 4
-    div_12m = row["Див 12м"]
-    
-    fund = state.g("fundamental_data", {}) or {}
-    dsi_raw = fund.get(sel_ticker, {}).get("dsi")
-    dsi_score = None
-    if dsi_raw is not None:
-        try:
-            v = float(dsi_raw)
-            dsi_score = v * 100 if v <= 1.5 else v
-        except (TypeError, ValueError):
-            dsi_score = None
-
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Текущее ТВХ", f"{old_avg:.{decimals}f} ₽")
-    c2.metric("Лотов в портфеле", str(old_lots))
-    c3.metric("Текущая цена", f"{current_price:.{decimals}f} ₽")
-    c4.metric("Див. на акцию (12м)", f"{div_12m:.2f} ₽" if div_12m else "—")
-
-    st.markdown("#### Докупка")
-    ic1, ic2 = st.columns(2)
-    with ic1:
-        new_price = st.number_input(
-            "Цена покупки, ₽", min_value=0.0, value=float(current_price), step=0.01,
-            format=f"%.{decimals}f", key=f"avg_new_price_{sel_ticker}"
-        )
-    with ic2:
-        new_lots = st.number_input(
-            "Лотов докупить", min_value=0, value=0, step=1, key=f"avg_new_lots_{sel_ticker}"
-        )
-
-    if new_lots > 0 and new_price > 0:
-        old_cost = old_avg * old_lots
-        new_cost = new_price * new_lots
-        total_lots = old_lots + new_lots
-        new_avg = (old_cost + new_cost) / total_lots if total_lots > 0 else 0.0
-
-        st.markdown("#### Результат усреднения")
-        r1, r2, r3, r4 = st.columns(4)
-        r1.metric("Новое ТВХ", f"{new_avg:.{decimals}f} ₽", f"{new_avg - old_avg:+.{decimals}f} ₽" if old_avg else None)
-        r2.metric("Всего лотов", str(total_lots), f"+{new_lots}")
-        r3.metric("Стоимость новой позиции", f"{new_avg * total_lots * lot_size:,.0f} ₽")
-        r4.metric("Затраты на докупку", f"{new_price * new_lots * lot_size:,.0f} ₽")
-
-        st.markdown("#### Метрики позиции")
-        m1, m2, m3, m4 = st.columns(4)
-
-        if current_price > 0 and new_avg > 0:
-            pl_rub = (current_price - new_avg) * total_lots * lot_size
-            pl_pct = (current_price / new_avg - 1) * 100
-            m1.metric("P/L по новой позиции", f"{pl_rub:+,.0f} ₽", f"{pl_pct:+.2f}%")
-        else:
-            m1.metric("P/L по новой позиции", "—")
-
-        if div_12m > 0 and new_avg > 0:
-            yield_old = (div_12m / old_avg * 100) if old_avg > 0 else 0.0
-            yield_new = div_12m / new_avg * 100
-            delta = yield_new - yield_old if old_avg > 0 else None
-            m2.metric("Див. доходность (новая)", f"{yield_new:.2f}%", f"{delta:+.2f}%" if delta is not None else None)
-        else:
-            m2.metric("Див. доходность (новая)", "—")
-
-        annual_div = div_12m * total_lots * lot_size
-        m3.metric("Годовой дивидендный поток", f"{annual_div:,.0f} ₽" if annual_div > 0 else "—")
-        m4.metric("DSI", f"{dsi_score:.0f}" if dsi_score is not None else "—")
