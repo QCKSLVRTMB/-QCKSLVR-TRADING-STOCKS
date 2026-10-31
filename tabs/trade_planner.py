@@ -106,7 +106,6 @@ def render_trade_planner(ticker: str, df_stocks: pd.DataFrame):
         
     df_entries = pd.DataFrame(rows) if rows else pd.DataFrame(columns=["Цена", "Лотов", "Комментарий", "Lock"])
     
-    # Убрали disabled, чтобы можно было редактировать новые строки
     edited = st.data_editor(
         df_entries, num_rows="dynamic", use_container_width=True, hide_index=True,
         column_config={
@@ -117,9 +116,11 @@ def render_trade_planner(ticker: str, df_stocks: pd.DataFrame):
         }
     )
     
+    old_tvh_line = float(port_item["ТВХ"]) if port_item else 0.0
+    new_avg_line = 0.0
+    
     if not edited.empty and "Цена" in edited.columns and "Лотов" in edited.columns:
         tdata["entries"] = []
-        # Безопасный парсинг строк
         for _, r in edited.iterrows():
             if r.get("Lock") == True:
                 continue
@@ -136,13 +137,13 @@ def render_trade_planner(ticker: str, df_stocks: pd.DataFrame):
                 "note": str(r.get("Комментарий", ""))
             })
             
-        # Расчет средней цены по строкам, где есть данные
         calc_df = edited.dropna(subset=["Цена", "Лотов"])
         total_lots = calc_df["Лотов"].sum()
         total_cost = (calc_df["Цена"] * calc_df["Лотов"] * inst.lot_size).sum()
         
         if total_lots > 0:
             avg_price = total_cost / (total_lots * inst.lot_size)
+            new_avg_line = avg_price
             
             st.markdown("##### Результат усреднения")
             r1, r2, r3 = st.columns(3)
@@ -214,11 +215,11 @@ def render_trade_planner(ticker: str, df_stocks: pd.DataFrame):
     chart_tabs = st.tabs([cfg["label"] for cfg in INTERVALS.values()])
     for tab, (tf_name, cfg) in zip(chart_tabs, INTERVALS.items()):
         with tab:
-            _render_tf_chart(ticker, tf_name, cfg, inst, tdata, mobile, buy_level, sell_level, clusters_data, custom_clusters_data)
+            _render_tf_chart(ticker, tf_name, cfg, inst, tdata, mobile, old_tvh_line, new_avg_line, buy_level, sell_level, clusters_data, custom_clusters_data)
 
     state.autosave()
 
-def _render_tf_chart(ticker, tf_name, cfg, inst, tdata, mobile, buy_level, sell_level, clusters_data, custom_clusters_data):
+def _render_tf_chart(ticker, tf_name, cfg, inst, tdata, mobile, old_tvh, new_avg, buy_level, sell_level, clusters_data, custom_clusters_data):
     chart_data = tdata["charts"][tf_name]
 
     if tf_name == "W": available_tools = ["channel", "fib_w", "cluster_range"]
@@ -379,7 +380,7 @@ def _render_tf_chart(ticker, tf_name, cfg, inst, tdata, mobile, buy_level, sell_
         if h1_fib_s and tf_name == "H1": charts.draw_fib(fig, h1_fib_s, x_left, x_right, "green", "0.5 H1")
 
     if show_position:
-        charts.draw_trade_visuals(fig, buy_level, sell_level, x_left, x_right, inst.decimals)
+        charts.draw_trade_visuals(fig, old_tvh, new_avg, buy_level, sell_level, x_left, x_right, inst.decimals)
 
     st.plotly_chart(fig, use_container_width=True, key=chart_key, on_select="rerun", selection_mode="points", config=charts.PLOT_CONFIG)
     st.caption(f"Диапазон отображения: {view.index[0].strftime('%d.%m.%Y %H:%M')} – {view.index[-1].strftime('%d.%m.%Y %H:%M')} · Баров: {len(view)}")
