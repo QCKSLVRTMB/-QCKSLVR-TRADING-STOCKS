@@ -164,6 +164,15 @@ def render_dashboard(df_stocks: pd.DataFrame):
     st.markdown("### Будущие дивиденды")
     future_div_list = state.g("future_div_list", [])
     
+    # Запасной вариант, если вдруг список пуст, но словарь есть
+    if not future_div_list:
+        future_divs_dict = state.g("future_dividends", {})
+        if future_divs_dict:
+            future_div_list = [
+                {"Тикер": k, "Название": "-", "Период": "-", "Дивиденд": v, "Дата закрытия": "-", "Выплата до": "-"}
+                for k, v in future_divs_dict.items()
+            ]
+            
     if not future_div_list:
         st.info("Нет данных о будущих дивидендах. Загрузите файл Источников с вкладкой «Дивиденды».")
     else:
