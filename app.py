@@ -11,8 +11,9 @@ from tabs.main_table import render_main_tab
 from tabs.indices import render_indices
 from tabs.rating import render_rating
 from tabs.portfolio import render_portfolio
-from tabs.trade_planner import render_trade_planner
 from tabs.rebalance import render_rebalance
+from tabs.dashboard import render_dashboard
+from tabs.trade_planner import render_trade_planner
 from ui.theme import inject_css, seg
 
 st.set_page_config(page_title=APP_TITLE, layout="wide", initial_sidebar_state="expanded")
@@ -160,17 +161,13 @@ def _parse_dividends_sheet(xls: pd.ExcelFile) -> dict:
     if not sheet_name: return {}
     df = pd.read_excel(xls, sheet_name=sheet_name)
     
-    # Строго ищем колонку 'Тикер'
     t_col = next((c for c in df.columns if 'тикер' in str(c).lower()), None)
-    
-    # Ищем колонку с суммой (где есть 'дивиденд' и 'руб')
     v_col = next((c for c in df.columns if 'дивиденд' in str(c).lower() and 'руб' in str(c).lower()), None)
     if not v_col:
         v_col = next((c for c in df.columns if 'дивиденд' in str(c).lower()), None)
         
     if not t_col or not v_col: return {}
     
-    # Ищем колонку с датой (Купить До, Дата закрытия, Выплата До)
     d_col = None
     for c in df.columns:
         cl = str(c).lower()
@@ -189,7 +186,6 @@ def _parse_dividends_sheet(xls: pd.ExcelFile) -> dict:
         try:
             dt_raw = row[d_col]
             if pd.isna(dt_raw): continue
-            # В Excel даты могут быть числами или строками
             if isinstance(dt_raw, (int, float)):
                 dt = pd.to_datetime(dt_raw, unit='D', origin='1899-12-30')
             else:
@@ -206,7 +202,6 @@ def _parse_portfolio_any(df_raw: pd.DataFrame, df_stocks: pd.DataFrame) -> tuple
     if df_raw is None or df_raw.empty: return [], 0.0
     
     cols = {str(c).strip().lower(): c for c in df_raw.columns}
-    
     t_candidates = [c for k, c in cols.items() if 'тикер' in k]
     p_candidates = [c for k, c in cols.items() if 'твх' in k or 'средн' in k or 'цена входа' in k]
     q_candidates = [c for k, c in cols.items() if 'лотов' in k or 'колич' in k or 'кол-во' in k]
@@ -334,7 +329,7 @@ with st.sidebar:
                     state.set_global("portfolio_cash", cash) 
                     st.session_state["ui_cash_rub"] = cash
                     st.session_state["_port_hash"] = _h
-                    st.success(f"Портфель загружен: {len(records)} позиций, кеш {cash:,.0f} ₽")
+                    st.success(f"Портфель загружен: {len(records)} позиций, кеш {cash:.0f} ₽")
                     state.autosave()
                 else:
                     st.error("Не найдены колонки Тикер / ТВХ / Лотов.")
@@ -351,13 +346,19 @@ with st.sidebar:
         parsed = storage.loads(json_file.getvalue().decode("utf-8"))
         if parsed:
             state.replace_state(parsed)
-            st.success("Загружено!"); st.rerun()
+            # Восстанавливаем сессионные данные для Ребалансировки
+            if "rebal_sectors_data" in parsed["global"]:
+                st.session_state["rebal_sectors"] = pd.DataFrame(parsed["global"]["rebal_sectors_data"])
+            if "rebal_tickers_data" in parsed["global"]:
+                st.session_state["rebal_tickers"] = parsed["global"]["rebal_tickers_data"]
+            st.success("Загружено!")
+            st.rerun()
 
 # ============================================================
 # Вкладки
 # ============================================================
-tab_market, tab_rating, tab_indices, tab_portfolio, tab_rebalance, tab_calc = st.tabs([
-    "Обзор", "Рейтинг", "Индексы", "Портфель", "Ребалансировка", "Калькулятор"
+tab_market, tab_rating, tab_indices, tab_portfolio, tab_dashboard, tab_rebalance, tab_calc = st.tabs([
+    "Обзор", "Рейтинг", "Индексы", "Портфель", "Дашборд", "Ребалансировка", "Калькулятор"
 ])
 
 with tab_market:
@@ -375,6 +376,10 @@ with tab_indices:
 with tab_portfolio:
     try: render_portfolio(df_stocks=df_stocks)
     except Exception as e: st.error(f"Ошибка: {e}")
+
+with tab_dashboard:
+    try: render_dashboard(df_stocks=df_stocks)
+    except Exception as e: st.error(f"Ошибка в Дашборде: {e}")
 
 with tab_rebalance:
     try: render_rebalance()
