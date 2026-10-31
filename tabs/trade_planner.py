@@ -88,10 +88,10 @@ def render_trade_planner(ticker: str, df_stocks: pd.DataFrame):
     st.markdown("#### Параметры сделки")
     c_sl, c_tp = st.columns(2)
     with c_sl:
-        buy_level = st.number_input("Уровень покупок (SL)", value=float(tdata.get("buy_level") or 0.0), step=float(inst.min_step), format=f"%.{inst.decimals}f", key=f"buy_{ticker}")
+        buy_level = st.number_input("Уровень покупок", value=float(tdata.get("buy_level") or 0.0), step=float(inst.min_step), format=f"%.{inst.decimals}f", key=f"buy_{ticker}")
         tdata["buy_level"] = float(buy_level) if buy_level > 0 else None
     with c_tp:
-        sell_level = st.number_input("Уровень продаж (TP)", value=float(tdata.get("sell_level") or 0.0), step=float(inst.min_step), format=f"%.{inst.decimals}f", key=f"sell_{ticker}")
+        sell_level = st.number_input("Уровень продаж", value=float(tdata.get("sell_level") or 0.0), step=float(inst.min_step), format=f"%.{inst.decimals}f", key=f"sell_{ticker}")
         tdata["sell_level"] = float(sell_level) if sell_level > 0 else None
 
     st.markdown("#### Расчет усреднения (ТВХ)")
