@@ -42,6 +42,7 @@ def _file_hash(f) -> str:
 # Excel-парсеры
 # ============================================================
 _TICKER_RE = re.compile(r'^[A-ZА-Я0-9]{1,10}$')
+
 _W_ALIASES = {
     "вверх": "вверх", "up": "вверх", "рост": "вверх",
     "вниз":  "вниз",  "down": "вниз", "падение": "вниз",
@@ -123,29 +124,52 @@ def _parse_dsi(df_dsi, name_index: dict) -> dict:
     return dsi_dict
 
 def _parse_w_any(xls: pd.ExcelFile) -> dict:
-    if 'W-формации' not in xls.sheet_names: return {}
-    df_w = pd.read_excel(xls, sheet_name='W-формации', header=None)
+    # 1. Ищем лист 'W-формации'. Если нет - берем первый попавшийся.
+    sheet_name = 'W-формации' if 'W-формации' in xls.sheet_names else xls.sheet_names[0]
+    df_w = pd.read_excel(xls, sheet_name=sheet_name, header=None)
+    
+    # 2. Ищем колонку с направлениями
     direction_idx = None
     for i in range(df_w.shape[1]):
         vals = df_w.iloc[:, i].dropna().astype(str).str.lower().str.strip()
         if vals.isin(set(_W_ALIASES.keys())).any():
             direction_idx = i
             break
-    if direction_idx is None: return {}
-    ticker_idx = 0 if direction_idx != 0 else 1
+            
+    if direction_idx is None: 
+        return {}
+        
+    # 3. Ищем колонку с тикерами (проверяем слева и справа от направлений)
+    ticker_idx = -1
+    if direction_idx > 0:
+        left_col = df_w.iloc[:, direction_idx - 1].dropna().astype(str)
+        if left_col.str.match(r'^[A-ZА-Я0-9]{2,10}$', na=False).any():
+            ticker_idx = direction_idx - 1
+            
+    if ticker_idx == -1 and direction_idx < df_w.shape[1] - 1:
+        right_col = df_w.iloc[:, direction_idx + 1].dropna().astype(str)
+        if right_col.str.match(r'^[A-ZА-Я0-9]{2,10}$', na=False).any():
+            ticker_idx = direction_idx + 1
+
+    if ticker_idx == -1:
+        return {}
+        
     result = {}
     for _, row in df_w.iterrows():
-        t_raw = row.iloc[ticker_idx] if ticker_idx < len(row) else None
-        d_raw = row.iloc[direction_idx] if direction_idx < len(row) else None
+        t_raw = row.iloc[ticker_idx]
+        d_raw = row.iloc[direction_idx]
         if pd.isna(t_raw) or pd.isna(d_raw): continue
+        
         ticker = str(t_raw).strip().upper()
         if not _TICKER_RE.match(ticker) or ticker in {'ТИКЕР', 'TICKER'}: continue
+        
         direction = str(d_raw).strip().lower()
-        if direction in _W_ALIASES: result[ticker] = _W_ALIASES[direction]
+        if direction in _W_ALIASES: 
+            result[ticker] = _W_ALIASES[direction]
+            
     return result
 
 def _parse_portfolio_any(df_raw: pd.DataFrame) -> list[dict]:
-    """Ищет нужные колонки и возвращает чистый список для интерфейса Портфеля."""
     if df_raw is None or df_raw.empty: return []
     
     cols = {str(c).strip().lower(): c for c in df_raw.columns}
