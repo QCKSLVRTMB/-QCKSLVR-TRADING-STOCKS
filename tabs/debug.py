@@ -6,153 +6,169 @@ from core.market import fetch_moex_stocks
 
 
 def render_debug():
-    """Вкладка для ручной корректировки параметров акций в рейтинге."""
+    """Вкладка для ручной корректировки параметров акций в рейтинге.
+    
+    Важно: корректировка применяется ТОЛЬКО к выбранному параметру.
+    Остальные параметры берутся из источников без изменений.
+    """
     st.subheader("Отладка и корректировка параметров")
     st.markdown("""
-    Здесь можно вручную скорректировать параметры для отдельных акций.
-    Эти корректировки сохранятся в JSON и будут применяться при расчете рейтинга.
+    Здесь можно вручную скорректировать **отдельные параметры** для акций.
+    Изменится только тот параметр, который вы заполните — остальные останутся нетронутыми.
     
     **Приоритет данных:**
-    - Дивиденды и DSI из файла "Источники" (Excel) имеют приоритет над корректировками
-    - Корректировки имеют приоритет над данными с dohod.ru
-    - ТВХ и лоты приоритетнее из JSON (портфель)
+    1. Файл "Источники" (Excel) — высший приоритет
+    2. Корректировка из этой вкладки (только заполненные поля)
+    3. Данные с dohod.ru / значения по умолчанию
     """)
-    
+
     df_stocks = fetch_moex_stocks()
     if df_stocks.empty:
         st.warning("Нет данных MOEX.")
         return
-    
+
     # Инициализация структуры корректировок
     if "ticker_overrides" not in state.get_state()["global"]:
         state.set_global("ticker_overrides", {})
-    
+
     overrides = state.g("ticker_overrides", {})
-    
+
     st.markdown("### Корректировки параметров акций")
-    
-    # Получаем список тикеров с корректировками
+
     override_tickers = list(overrides.keys())
-    
+
     if not override_tickers:
         st.info("Нет активных корректировок. Добавьте новую корректировку ниже.")
-    
+
     # Отображаем существующие корректировки
     if override_tickers:
         st.markdown("#### Активные корректировки")
-        
-        rows = []
-        for ticker in override_tickers:
+
+        for ticker in sorted(override_tickers):
             data = overrides[ticker]
-            rows.append({
-                "Тикер": ticker,
-                "Див. 12м (корр.)": data.get("div_12m", ""),
-                "DSI (корр.)": data.get("dsi", ""),
-                "Арсагера (корр.)": data.get("ars_group", ""),
-            })
-        
-        df_overrides = pd.DataFrame(rows)
-        
-        # Кнопка удаления для каждой корректировки
-        for idx, row in df_overrides.iterrows():
-            col1, col2, col3, col4, col5 = st.columns([1, 1, 1, 1, 0.5])
-            with col1:
-                st.text(f"**{row['Тикер']}**")
-            with col2:
-                st.text(f"Див: {row['Див. 12м (корр.)']}" if row['Див. 12м (корр.)'] else "Див: —")
-            with col3:
-                st.text(f"DSI: {row['DSI (корр.)']}" if row['DSI (корр.)'] else "DSI: —")
-            with col4:
-                st.text(f"Арс: {row['Арсагера (корр.)']}" if row['Арсагера (корр.)'] else "Арс: —")
-            with col5:
-                if st.button("🗑", key=f"del_override_{row['Тикер']}"):
-                    del overrides[row['Тикер']]
-                    state.set_global("ticker_overrides", overrides)
-                    state.autosave(force=True)
-                    st.rerun()
-        
-        st.divider()
-    
+            div_val = data.get("div_12m")
+            dsi_val = data.get("dsi")
+            ars_val = data.get("ars_group")
+
+            with st.container():
+                st.markdown(f"**{ticker}**")
+                c1, c2, c3, c4 = st.columns([2, 2, 2, 1])
+                with c1:
+                    st.caption(f"Див. 12м: **{div_val if div_val else '—'}**")
+                with c2:
+                    st.caption(f"DSI: **{dsi_val if dsi_val else '—'}**")
+                with c3:
+                    st.caption(f"Арсагера: **{ars_val if ars_val else '—'}**")
+                with c4:
+                    if st.button("🗑 Удалить", key=f"del_override_{ticker}"):
+                        del overrides[ticker]
+                        state.set_global("ticker_overrides", overrides)
+                        state.autosave(force=True)
+                        st.rerun()
+                st.divider()
+
     # Форма добавления новой корректировки
     st.markdown("#### Добавить корректировку")
-    
+    st.caption("Заполните только те поля, которые нужно изменить. Пустые поля не будут применены.")
+
     all_tickers = sorted(df_stocks["SECID"].unique().tolist())
-    
-    col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
-    
+
+    col1, col2, col3, col4, col5 = st.columns([2, 1, 1, 1, 1])
+
     with col1:
         selected_ticker = st.selectbox(
             "Тикер",
             options=all_tickers,
             key="debug_ticker_select"
         )
-    
+
     with col2:
-        div_12m = st.number_input(
-            "Див. 12м",
-            value=0.0,
-            step=0.01,
-            format="%.2f",
-            key="debug_div_12m"
-        )
-    
-    with col3:
+        # Показываем текущее значение из источников
+        fund_data = state.g("fundamental_data", {})
+        current_dsi = fund_data.get(selected_ticker, {}).get("dsi", 0.0) if selected_ticker else 0.0
         dsi = st.number_input(
-            "DSI",
+            "DSI (оставьте 0, чтобы не менять)",
             value=0.0,
             step=0.01,
             min_value=0.0,
             max_value=1.0,
             format="%.2f",
-            key="debug_dsi"
+            key="debug_dsi",
+            help=f"Текущее из источников: {current_dsi:.2f}"
         )
-    
-    with col4:
+
+    with col3:
+        current_ars = fund_data.get(selected_ticker, {}).get("ars_group", 0) if selected_ticker else 0
         ars_group = st.selectbox(
-            "Арсагера",
+            "Арсагера (0 = не менять)",
             options=[0, 1, 2, 3, 4],
             index=0,
-            key="debug_ars_group"
+            key="debug_ars_group",
+            help=f"Текущая из источников: {current_ars}"
         )
-    
-    if st.button("Добавить/Обновить корректировку", key="debug_add_override", use_container_width=True):
-        if selected_ticker:
-            overrides[selected_ticker] = {
-                "div_12m": div_12m if div_12m > 0 else None,
-                "dsi": dsi if dsi > 0 else None,
-                "ars_group": ars_group if ars_group > 0 else None
-            }
+
+    with col4:
+        current_div = state.g("future_dividends", {}).get(selected_ticker, 0.0) if selected_ticker else 0.0
+        div_12m = st.number_input(
+            "Див. 12м (0 = не менять)",
+            value=0.0,
+            step=1.0,
+            min_value=0.0,
+            format="%.2f",
+            key="debug_div_12m",
+            help=f"Текущий из источников: {current_div:.2f}"
+        )
+
+    with col5:
+        st.write("")  # отступ
+        st.write("")  # отступ
+        add_clicked = st.button("💾 Сохранить", key="debug_add_override", use_container_width=True)
+
+    if add_clicked and selected_ticker:
+        # Создаем запись только с заполненными полями
+        override_entry = {}
+        if dsi > 0:
+            override_entry["dsi"] = dsi
+        if ars_group > 0:
+            override_entry["ars_group"] = ars_group
+        if div_12m > 0:
+            override_entry["div_12m"] = div_12m
+
+        if override_entry:
+            overrides[selected_ticker] = override_entry
             state.set_global("ticker_overrides", overrides)
             state.autosave(force=True)
-            st.success(f"Корректировка для {selected_ticker} сохранена!")
+            st.success(f"Корректировка для {selected_ticker} сохранена! Изменятся только заполненные поля.")
             st.rerun()
-    
+        else:
+            st.warning("Заполните хотя бы одно поле для корректировки.")
+
     st.divider()
-    
-    # Информация о приоритетах
+
+    # Справка о приоритетах
     st.markdown("### Справка о приоритетах данных")
-    
+
     st.markdown("""
     **Дивиденды (div_12m):**
     1. Файл "Источники" (Excel) — высший приоритет
-    2. Корректировка из этой вкладки
+    2. Корректировка из этой вкладки (только если заполнено)
     3. Данные с dohod.ru
-    
+
     **DSI:**
     1. Файл "Источники" (Excel) — высший приоритет
-    2. Корректировка из этой вкладки
+    2. Корректировка из этой вкладки (только если заполнено)
     3. Значение по умолчанию (0)
-    
+
     **Группа Арсагера:**
     1. Файл "Источники" (Excel) — высший приоритет
-    2. Корректировка из этой вкладки
+    2. Корректировка из этой вкладки (только если заполнено)
     3. Значение по умолчанию (0)
-    
+
     **ТВХ и лоты:**
     1. JSON (портфель) — высший приоритет
     2. Файл "Портфель" (Excel)
     """)
-    
+
     # Кнопка очистки всех корректировок
     if overrides:
         st.divider()
