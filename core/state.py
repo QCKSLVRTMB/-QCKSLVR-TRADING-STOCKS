@@ -8,9 +8,12 @@ from core.config import DEFAULT_GLOBAL
 _KEY = "app_state"
 _HASH = "_app_state_hash"
 _TS = "_app_state_saved_ts"
-SAVE_DEBOUNCE_SEC = 1.5
+SAVE_DEBOUNCE_SEC = 0.5  # Уменьшено с 1.5 до 0.5 сек для быстрого сохранения разметки
 
-def profile() -> str: return st.session_state.get("sb_profile", "default")
+
+def profile() -> str:
+    return st.session_state.get("sb_profile", "default")
+
 
 def get_state() -> dict:
     if _KEY not in st.session_state:
@@ -19,27 +22,41 @@ def get_state() -> dict:
         st.session_state[_TS] = 0.0
     return st.session_state[_KEY]
 
+
 def replace_state(new_state: dict, persist: bool = True) -> None:
     st.session_state[_KEY] = new_state
     st.session_state[_HASH] = ""
-    if persist: autosave(force=True)
+    if persist:
+        autosave(force=True)
 
-def g(key: str, default=None): return get_state()["global"].get(key, DEFAULT_GLOBAL.get(key, default))
-def set_global(key: str, value) -> None: get_state()["global"][key] = value
+
+def g(key: str, default=None):
+    return get_state()["global"].get(key, DEFAULT_GLOBAL.get(key, default))
+
+
+def set_global(key: str, value) -> None:
+    get_state()["global"][key] = value
+
 
 def ticker(name: str) -> dict:
     tickers = get_state()["tickers"]
-    if name not in tickers: tickers[name] = storage.default_ticker_state()
+    if name not in tickers:
+        tickers[name] = storage.default_ticker_state()
     return tickers[name]
 
-def _hash(state: dict) -> str: return hashlib.md5(storage.dumps(state, pretty=False).encode()).hexdigest()
+
+def _hash(state: dict) -> str:
+    return hashlib.md5(storage.dumps(state, pretty=False).encode()).hexdigest()
+
 
 def autosave(force: bool = False) -> bool:
     state = get_state()
     now = time.time()
-    if not force and now - st.session_state.get(_TS, 0.0) < SAVE_DEBOUNCE_SEC: return False
+    if not force and now - st.session_state.get(_TS, 0.0) < SAVE_DEBOUNCE_SEC:
+        return False
     h = _hash(state)
-    if not force and h == st.session_state.get(_HASH): return False
+    if not force and h == st.session_state.get(_HASH):
+        return False
     storage.save_profile(state, profile())
     st.session_state[_HASH] = h
     st.session_state[_TS] = now
