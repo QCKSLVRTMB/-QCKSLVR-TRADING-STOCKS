@@ -15,7 +15,7 @@ DEFAULT_SECTORS = [
 
 def render_rebalance():
     st.subheader("Ребалансировка портфеля")
-    st.markdown("Распределение капитала по секторам и активам на основе их рейтинговых баллов.")
+    st.markdown("Распределение целевого капитала по секторам и активам на основе их рейтинговых баллов.")
     
     df_stocks = fetch_moex_stocks()
     df_indices = fetch_moex_indices()
@@ -62,8 +62,8 @@ def render_rebalance():
         horizontal=False,
         help=(
             "1. Весь портфель пересчитывается, кеш докупает акции до целевых долей.\n"
-            "2. Система может предложить продажу, чтобы достичь целевого % кеша (сейчас это 20%).\n"
-            "3. Идеально для усреднения: распределяется только доступный кеш, текущие позиции не продаются."
+            "2. Система может предложить продажу, чтобы достичь целевого % кеша.\n"
+            "3. Идеально для усреднения: распределяется только доступный кеш."
         )
     )
     
@@ -187,6 +187,7 @@ def render_rebalance():
                 planned_amount = sector_budget / len(tickers) if len(tickers) > 0 else 0.0
                 share_in_sector = 100 / len(tickers) if len(tickers) > 0 else 0.0
             
+            # === НОВОЕ: Доля в портфеле от общей стоимости портфеля ===
             share_in_portfolio = (planned_amount / total_portfolio_value) * 100 if total_portfolio_value > 0 else 0
             
             # Находим текущие лоты
@@ -202,7 +203,6 @@ def render_rebalance():
             price = inst.price if inst.price > 0 else current_tvh
             lot_size = inst.lot_size if inst.lot_size > 0 else 1
             
-            # Сколько лотов можно купить на запланированную сумму
             if price > 0 and planned_amount > 0:
                 target_lots = int(planned_amount // (price * lot_size))
             else:
@@ -224,6 +224,7 @@ def render_rebalance():
                 "Балл": score,
                 "Планируемая сумма, ₽": planned_amount,
                 "Доля в секторе, %": share_in_sector,
+                "Доля в портфеле, %": share_in_portfolio,  # <-- ДОБАВЛЕНО
                 "Текущие лоты": current_lots,
                 "Целевые лоты": target_lots,
                 "Действие": action_str,
@@ -241,6 +242,9 @@ def render_rebalance():
     
     df_result = pd.DataFrame(table_rows)
     
+    # === НОВОЕ: Сортировка по "Доля в портфеле, %" по убыванию ===
+    df_result = df_result.sort_values("Доля в портфеле, %", ascending=False).reset_index(drop=True)
+    
     def style_row(row):
         styles = [""] * len(row)
         if row["Балл"] == 0:
@@ -250,9 +254,9 @@ def render_rebalance():
         
         act = row["Действие"]
         if "Купить" in act:
-            styles[8] = "background-color: #C8E6C9; color: #1B5E20; font-weight: bold;"
+            styles[9] = "background-color: #C8E6C9; color: #1B5E20; font-weight: bold;"
         elif "Продать" in act:
-            styles[8] = "background-color: #FFCDD2; color: #B71C1C; font-weight: bold;"
+            styles[9] = "background-color: #FFCDD2; color: #B71C1C; font-weight: bold;"
             
         return styles
     
@@ -263,6 +267,7 @@ def render_rebalance():
             "Балл": "{:.0f}",
             "Планируемая сумма, ₽": "{:.0f}",
             "Доля в секторе, %": "{:.1f}%",
+            "Доля в портфеле, %": "{:.2f}%",  # <-- ДОБАВЛЕНО
             "Текущие лоты": "{:.0f}",
             "Целевые лоты": "{:.0f}",
         })
