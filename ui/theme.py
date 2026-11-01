@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 import pandas as pd
 import streamlit as st
 
@@ -9,7 +10,6 @@ div[data-testid="stToolbar"]{visibility:hidden;height:0;}
 div[data-baseweb="tab-list"]{overflow-x:auto;scrollbar-width:none;}
 div[data-baseweb="tab-list"]::-webkit-scrollbar{display:none;}
 
-/* Тонкий черный крестик вместо стандартного курсора */
 .js-plotly-plot .plotly .draglayer {
     cursor: crosshair !important;
 }
@@ -30,7 +30,6 @@ div[data-baseweb="tab-list"]::-webkit-scrollbar{display:none;}
 
 div[data-testid="stPlotlyChart"]{background:#FFFFFF;border-radius:10px;}
 
-/* --- БЕЗОПАСНОЕ СКРЫТИЕ ТЕКСТА --- */
 [data-testid="stFileUploaderDropzoneInstructions"] {
     visibility: hidden !important;
     height: 0px !important;
@@ -60,7 +59,6 @@ div[data-testid="stPlotlyChart"]{background:#FFFFFF;border-radius:10px;}
     color: #2E86DE !important;
 }
 
-/* === МОБИЛЬНАЯ ОПТИМИЗАЦИЯ === */
 @media (max-width: 640px){
     .block-container{padding-left:.6rem;padding-right:.6rem;padding-top:3.5rem;}
     h1{font-size:1.3rem!important;} h2{font-size:1.1rem!important;} h3{font-size:1rem!important;}
@@ -68,59 +66,9 @@ div[data-testid="stPlotlyChart"]{background:#FFFFFF;border-radius:10px;}
     div[data-testid="stMetricValue"]{font-size:1.05rem;}
     div[data-baseweb="tab"]{padding:.35rem .6rem;font-size:.82rem;}
     .fc-cards{grid-template-columns:repeat(2,1fr);}
-    
-    /* Графики - РАЗРЕШАЕМ touch для зума и панорамирования */
     .js-plotly-plot{touch-action:none !important;}
     .js-plotly-plot .plotly .draglayer{cursor:crosshair !important;}
     .js-plotly-plot .plotly .zoomlayer{touch-action:none !important;}
-    
-    /* Вертикальное расположение колонок на мобильном */
-    div[data-testid="column"]{width:100% !important; min-width:100% !important;}
-    div[data-testid="column"] > div{width:100% !important;}
-    
-    /* Горизонтальный скролл для таблиц */
-    div[data-testid="stDataFrame"]{overflow-x:auto !important; -webkit-overflow-scrolling:touch;}
-    div[data-testid="stDataFrame"] table{min-width:600px;}
-    div[data-testid="stDataFrame"] td, 
-    div[data-testid="stDataFrame"] th{font-size:12px !important; padding:4px 6px !important; white-space:nowrap;}
-    
-    /* Data editor - горизонтальный скролл */
-    div[data-testid="stDataFrameResizable"]{overflow-x:auto !important;}
-    
-    /* Multiselect и selectbox - увеличенный размер для тача */
-    div[data-baseweb="select"]{font-size:14px;}
-    div[data-baseweb="select"] div[role="listbox"]{font-size:14px;}
-    
-    /* Кнопки инструментов - полноширинные */
-    div[data-testid="stRadio"] > div{flex-direction:column !important; gap:4px;}
-    div[data-testid="stRadio"] label{width:100% !important; min-height:40px; display:flex; align-items:center; justify-content:center;}
-    
-    /* Toggle и checkbox - увеличенные */
-    div[data-testid="stCheckbox"] label, div[data-testid="stToggle"] label{font-size:14px;}
-    
-    /* Number input - полноширинный */
-    div[data-testid="stNumberInput"]{width:100% !important;}
-    div[data-testid="stNumberInput"] input{width:100% !important;}
-    
-    /* Скрываем лишние элементы */
-    .stFileUploader{min-height:auto !important;}
-    
-    /* Segmented control - вертикальный на мобильном */
-    div[data-testid="stSegmentedControl"] > div{flex-direction:column !important;}
-    div[data-testid="stSegmentedControl"] button{width:100% !important; min-height:40px;}
-    
-    /* Сайдбар - компактный */
-    section[data-testid="stSidebar"]{width:280px !important;}
-    section[data-testid="stSidebar"] .stButton button{min-height:40px;}
-    
-    /* Metric cards - в 2 колонки */
-    div[data-testid="stMetric"]{width:48% !important;}
-}
-
-/* Планшет */
-@media (min-width: 641px) and (max-width: 1024px){
-    .fc-cards{grid-template-columns:repeat(3,1fr);}
-    div[data-testid="stMetric"]{width:32% !important;}
 }
 </style>
 """
@@ -134,7 +82,7 @@ def inject_css() -> None:
 
 def format_date(val) -> str:
     try:
-        return pd.to_datetime(val).strftime('%d.%m.%Y')
+        return pd.to_datetime(val).strftime("%d.%m.%Y")
     except Exception:
         return str(val)
 
@@ -187,11 +135,15 @@ def seg(label, options, *, key, default=None, fmt=None, help=None):
     if hasattr(st, "segmented_control"):
         if key not in st.session_state:
             st.session_state[key] = default if default is not None else options[0]
-        return st.segmented_control(label, options, key=key, format_func=fmt or str,
-                                    help=help, selection_mode="single")
+        return st.segmented_control(
+            label, options, key=key, format_func=fmt or str,
+            help=help, selection_mode="single",
+        )
     idx = options.index(default) if default in options else 0
-    return st.radio(label, options, index=idx, key=key, horizontal=True,
-                    format_func=fmt or str, help=help)
+    return st.radio(
+        label, options, index=idx, key=key, horizontal=True,
+        format_func=fmt or str, help=help,
+    )
 
 
 def money(v) -> str:
