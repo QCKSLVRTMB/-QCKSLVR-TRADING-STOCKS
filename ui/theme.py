@@ -4,84 +4,140 @@ import streamlit as st
 
 CSS = """
 <style>
-  .block-container{padding-top:4rem; padding-bottom:3.5rem;}
-  div[data-testid="stToolbar"]{visibility:hidden;height:0;}
-  div[data-baseweb="tab-list"]{overflow-x:auto;scrollbar-width:none;}
-  div[data-baseweb="tab-list"]::-webkit-scrollbar{display:none;}
+.block-container{padding-top:4rem; padding-bottom:3.5rem;}
+div[data-testid="stToolbar"]{visibility:hidden;height:0;}
+div[data-baseweb="tab-list"]{overflow-x:auto;scrollbar-width:none;}
+div[data-baseweb="tab-list"]::-webkit-scrollbar{display:none;}
 
-  /* Тонкий черный крестик вместо стандартного курсора */
-  .js-plotly-plot .plotly .draglayer {
-      cursor: crosshair !important;
-  }
+/* Тонкий черный крестик вместо стандартного курсора */
+.js-plotly-plot .plotly .draglayer {
+    cursor: crosshair !important;
+}
 
-  .fc-cards{display:grid;gap:.5rem;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));}
-  .fc-card{
+.fc-cards{display:grid;gap:.5rem;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));}
+.fc-card{
     background:#FFFFFF;
     border:1px solid #E3E7ED;
     border-radius:12px;
     padding:.6rem .75rem;
     box-shadow:0 1px 2px rgba(0,0,0,0.03);
-  }
-  .fc-card .lbl{font-size:.72rem;color:#6B7280;line-height:1.1;}
-  .fc-card .val{font-size:1.05rem;font-weight:600;margin-top:.15rem;color:#0E1117;}
-  .fc-ok{color:#1B7A6D !important;}
-  .fc-bad{color:#D32F2F !important;}
-  .fc-warn{color:#C77800 !important;}
+}
+.fc-card .lbl{font-size:.72rem;color:#6B7280;line-height:1.1;}
+.fc-card .val{font-size:1.05rem;font-weight:600;margin-top:.15rem;color:#0E1117;}
+.fc-ok{color:#1B7A6D !important;}
+.fc-bad{color:#D32F2F !important;}
+.fc-warn{color:#C77800 !important;}
 
-  div[data-testid="stPlotlyChart"]{background:#FFFFFF;border-radius:10px;}
+div[data-testid="stPlotlyChart"]{background:#FFFFFF;border-radius:10px;}
 
-  /* --- БЕЗОПАСНОЕ СКРЫТИЕ ТЕКСТА (без display: none) --- */
-  [data-testid="stFileUploaderDropzoneInstructions"] {
-      visibility: hidden !important;
-      height: 0px !important;
-      min-height: 0px !important;
-      margin: 0 !important;
-      padding: 0 !important;
-      overflow: hidden !important;
-  }
-  
-  [data-testid="stFileUploaderDropzone"] {
-      padding: 0 !important;
-      min-height: 0 !important;
-      background-color: transparent !important;
-      border: none !important;
-  }
-  
-  [data-testid="stFileUploaderDropzone"] button {
-      width: 100% !important;
-      border: 1px solid rgba(49, 51, 63, 0.2) !important;
-      background-color: white !important;
-      color: #31333F !important;
-      transition: 0.2s;
-  }
-  
-  [data-testid="stFileUploaderDropzone"] button:hover {
-      border-color: #2E86DE !important;
-      color: #2E86DE !important;
-  }
+/* --- БЕЗОПАСНОЕ СКРЫТИЕ ТЕКСТА --- */
+[data-testid="stFileUploaderDropzoneInstructions"] {
+    visibility: hidden !important;
+    height: 0px !important;
+    min-height: 0px !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+}
 
-  @media (max-width: 640px){
+[data-testid="stFileUploaderDropzone"] {
+    padding: 0 !important;
+    min-height: 0 !important;
+    background-color: transparent !important;
+    border: none !important;
+}
+
+[data-testid="stFileUploaderDropzone"] button {
+    width: 100% !important;
+    border: 1px solid rgba(49, 51, 63, 0.2) !important;
+    background-color: white !important;
+    color: #31333F !important;
+    transition: 0.2s;
+}
+
+[data-testid="stFileUploaderDropzone"] button:hover {
+    border-color: #2E86DE !important;
+    color: #2E86DE !important;
+}
+
+/* === МОБИЛЬНАЯ ОПТИМИЗАЦИЯ === */
+@media (max-width: 640px){
     .block-container{padding-left:.6rem;padding-right:.6rem;padding-top:3.5rem;}
     h1{font-size:1.3rem!important;} h2{font-size:1.1rem!important;} h3{font-size:1rem!important;}
     .stButton button, .stDownloadButton button{min-height:44px;width:100%;}
     div[data-testid="stMetricValue"]{font-size:1.05rem;}
     div[data-baseweb="tab"]{padding:.35rem .6rem;font-size:.82rem;}
     .fc-cards{grid-template-columns:repeat(2,1fr);}
-    .js-plotly-plot{touch-action:pan-y;}
-  }
+    
+    /* Графики - РАЗРЕШАЕМ touch для зума и панорамирования */
+    .js-plotly-plot{touch-action:none !important;}
+    .js-plotly-plot .plotly .draglayer{cursor:crosshair !important;}
+    .js-plotly-plot .plotly .zoomlayer{touch-action:none !important;}
+    
+    /* Вертикальное расположение колонок на мобильном */
+    div[data-testid="column"]{width:100% !important; min-width:100% !important;}
+    div[data-testid="column"] > div{width:100% !important;}
+    
+    /* Горизонтальный скролл для таблиц */
+    div[data-testid="stDataFrame"]{overflow-x:auto !important; -webkit-overflow-scrolling:touch;}
+    div[data-testid="stDataFrame"] table{min-width:600px;}
+    div[data-testid="stDataFrame"] td, 
+    div[data-testid="stDataFrame"] th{font-size:12px !important; padding:4px 6px !important; white-space:nowrap;}
+    
+    /* Data editor - горизонтальный скролл */
+    div[data-testid="stDataFrameResizable"]{overflow-x:auto !important;}
+    
+    /* Multiselect и selectbox - увеличенный размер для тача */
+    div[data-baseweb="select"]{font-size:14px;}
+    div[data-baseweb="select"] div[role="listbox"]{font-size:14px;}
+    
+    /* Кнопки инструментов - полноширинные */
+    div[data-testid="stRadio"] > div{flex-direction:column !important; gap:4px;}
+    div[data-testid="stRadio"] label{width:100% !important; min-height:40px; display:flex; align-items:center; justify-content:center;}
+    
+    /* Toggle и checkbox - увеличенные */
+    div[data-testid="stCheckbox"] label, div[data-testid="stToggle"] label{font-size:14px;}
+    
+    /* Number input - полноширинный */
+    div[data-testid="stNumberInput"]{width:100% !important;}
+    div[data-testid="stNumberInput"] input{width:100% !important;}
+    
+    /* Скрываем лишние элементы */
+    .stFileUploader{min-height:auto !important;}
+    
+    /* Segmented control - вертикальный на мобильном */
+    div[data-testid="stSegmentedControl"] > div{flex-direction:column !important;}
+    div[data-testid="stSegmentedControl"] button{width:100% !important; min-height:40px;}
+    
+    /* Сайдбар - компактный */
+    section[data-testid="stSidebar"]{width:280px !important;}
+    section[data-testid="stSidebar"] .stButton button{min-height:40px;}
+    
+    /* Metric cards - в 2 колонки */
+    div[data-testid="stMetric"]{width:48% !important;}
+}
+
+/* Планшет */
+@media (min-width: 641px) and (max-width: 1024px){
+    .fc-cards{grid-template-columns:repeat(3,1fr);}
+    div[data-testid="stMetric"]{width:32% !important;}
+}
 </style>
 """
+
 
 def inject_css() -> None:
     if not st.session_state.get("_css_done"):
         st.markdown(CSS, unsafe_allow_html=True)
         st.session_state["_css_done"] = True
 
+
 def format_date(val) -> str:
     try:
         return pd.to_datetime(val).strftime('%d.%m.%Y')
     except Exception:
         return str(val)
+
 
 def kv_data(items: list[tuple[str, str, str]], mobile: bool = False):
     if mobile:
@@ -90,7 +146,6 @@ def kv_data(items: list[tuple[str, str, str]], mobile: bool = False):
             row_style = "background:#fff; border:1px solid #e2e8f0;"
             lbl_color = "color:#64748b;"
             val_color = "color:#0f172a;"
-
             if status == "fail":
                 val_color = "background-color:#ef5350; color:#000000; padding:2px 6px; border-radius:4px;"
             elif status == "ok":
@@ -99,7 +154,6 @@ def kv_data(items: list[tuple[str, str, str]], mobile: bool = False):
                 val_color = "color:#dc2626;"
             elif status == "warn":
                 val_color = "color:#d97706;"
-
             html += f"""
             <div style="{row_style} border-radius:6px; padding:10px 12px; display:flex; justify-content:space-between; align-items:center;">
                 <span style="{lbl_color} font-size:13px;">{label}</span>
@@ -119,14 +173,15 @@ def kv_data(items: list[tuple[str, str, str]], mobile: bool = False):
                 val_color = "color: #dc2626;"
             elif status == "warn":
                 val_color = "color: #d97706;"
-
             html += f"<tr><td style='padding:10px; border-bottom:1px solid #e2e8f0; color:#334155;'>{label}</td><td style='text-align:right; padding:10px; border-bottom:1px solid #e2e8f0; font-weight:600;'><span style='{val_color}'>{value}</span></td></tr>"
         html += "</tbody></table>"
     st.markdown(html, unsafe_allow_html=True)
 
+
 def fragment(fn):
     f = getattr(st, "fragment", None) or getattr(st, "experimental_fragment", None)
     return f(fn) if f else fn
+
 
 def seg(label, options, *, key, default=None, fmt=None, help=None):
     if hasattr(st, "segmented_control"):
@@ -138,11 +193,13 @@ def seg(label, options, *, key, default=None, fmt=None, help=None):
     return st.radio(label, options, index=idx, key=key, horizontal=True,
                     format_func=fmt or str, help=help)
 
+
 def money(v) -> str:
     try:
         return f"{float(v):,.2f} ₽".replace(",", " ").replace(".", ",")
     except Exception:
         return str(v)
+
 
 def num(v, d=2) -> str:
     try:
