@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 import hashlib
 import time
 import streamlit as st
@@ -8,7 +9,7 @@ from core.config import DEFAULT_GLOBAL
 _KEY = "app_state"
 _HASH = "_app_state_hash"
 _TS = "_app_state_saved_ts"
-SAVE_DEBOUNCE_SEC = 0.5  # Уменьшено с 1.5 до 0.5 сек для быстрого сохранения разметки
+SAVE_DEBOUNCE_SEC = 0.5
 
 
 def profile() -> str:
