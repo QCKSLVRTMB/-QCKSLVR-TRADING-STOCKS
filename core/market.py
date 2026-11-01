@@ -15,12 +15,14 @@ ISS_INDICES = "https://iss.moex.com/iss/engines/stock/markets/index/securities.j
 ISS_CANDLES = "https://iss.moex.com/iss/engines/stock/markets/{market}/securities/{ticker}/candles.json"
 ISS_HISTORY = "https://iss.moex.com/iss/history/engines/stock/markets/{market}/securities/{ticker}.json"
 
+
 @st.cache_resource(show_spinner=False)
 def _session() -> requests.Session:
     s = requests.Session()
     s.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"})
     s.mount("https://", HTTPAdapter(max_retries=Retry(total=3, backoff_factor=0.5)))
     return s
+
 
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_moex_stocks() -> pd.DataFrame:
@@ -32,21 +34,21 @@ def fetch_moex_stocks() -> pd.DataFrame:
     except Exception as e:
         st.warning(f"ISS недоступен: {e}")
         return pd.DataFrame()
-
     for col in ["LOTSIZE", "MINSTEP", "PREVPRICE", "LISTLEVEL", "ISSUESIZE", "DECIMALS", "SECID", "SHORTNAME"]:
-        if col not in sec.columns: sec[col] = 0 if col not in ["SECID", "SHORTNAME"] else ""
+        if col not in sec.columns:
+            sec[col] = 0 if col not in ["SECID", "SHORTNAME"] else ""
     for col in ["LAST", "VALTODAY", "LASTCHANGEPRCNT", "NUMTRADES", "SECID"]:
-        if col not in mkt.columns: mkt[col] = 0 if col != "SECID" else ""
-
+        if col not in mkt.columns:
+            mkt[col] = 0 if col != "SECID" else ""
     df = sec[["SECID", "SHORTNAME", "LOTSIZE", "MINSTEP", "PREVPRICE", "LISTLEVEL", "ISSUESIZE", "DECIMALS"]].merge(
-        mkt[["SECID", "LAST", "VALTODAY", "LASTCHANGEPRCNT", "NUMTRADES"]], on="SECID", how="left")
-    
+        mkt[["SECID", "LAST", "VALTODAY", "LASTCHANGEPRCNT", "NUMTRADES"]], on="SECID", how="left"
+    )
     for c in ["LOTSIZE", "MINSTEP", "PREVPRICE", "LISTLEVEL", "ISSUESIZE", "DECIMALS", "LAST", "VALTODAY", "LASTCHANGEPRCNT", "NUMTRADES"]:
         df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
-        
     df["PRICE"] = df["LAST"].where(df["LAST"] > 0, df["PREVPRICE"])
     df["LOT_VALUE"] = df["PRICE"] * df["LOTSIZE"]
     return df
+
 
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_moex_indices() -> pd.DataFrame:
@@ -57,19 +59,22 @@ def fetch_moex_indices() -> pd.DataFrame:
         mkt = pd.DataFrame(js.get("marketdata", {}).get("data", []), columns=js.get("marketdata", {}).get("columns", []))
     except Exception:
         return pd.DataFrame()
-
     valid_tickers = ["IMOEX"] + list(INDEX_META.keys())
-    if "SECID" not in mkt.columns: mkt["SECID"] = ""
-    if "CURRENTVALUE" not in mkt.columns: mkt["CURRENTVALUE"] = 0.0
-    if "LASTCHANGEPRCNT" not in mkt.columns: mkt["LASTCHANGEPRCNT"] = 0.0
-    if "SECID" not in sec.columns: return pd.DataFrame()
-
+    if "SECID" not in mkt.columns:
+        mkt["SECID"] = ""
+    if "CURRENTVALUE" not in mkt.columns:
+        mkt["CURRENTVALUE"] = 0.0
+    if "LASTCHANGEPRCNT" not in mkt.columns:
+        mkt["LASTCHANGEPRCNT"] = 0.0
+    if "SECID" not in sec.columns:
+        return pd.DataFrame()
     df = sec[sec["SECID"].isin(valid_tickers)][["SECID", "SHORTNAME"]].merge(
-        mkt[["SECID", "CURRENTVALUE", "LASTCHANGEPRCNT"]], on="SECID", how="left")
-    
+        mkt[["SECID", "CURRENTVALUE", "LASTCHANGEPRCNT"]], on="SECID", how="left"
+    )
     df["CURRENTVALUE"] = pd.to_numeric(df["CURRENTVALUE"], errors="coerce").fillna(0)
     df["LASTCHANGEPRCNT"] = pd.to_numeric(df["LASTCHANGEPRCNT"], errors="coerce").fillna(0)
     return df
+
 
 @st.cache_data(ttl=None, show_spinner=False)
 def fetch_extreme_close(ticker: str, date_val, market: str = "index") -> tuple[float, str]:
@@ -84,27 +89,26 @@ def fetch_extreme_close(ticker: str, date_val, market: str = "index") -> tuple[f
             return 0.0, "-"
     except Exception:
         return 0.0, "-"
-
     monday = d - timedelta(days=d.isoweekday() - 1)
     friday = monday + timedelta(days=4)
     today = datetime.now()
-    if friday > today: friday = today
-
+    if friday > today:
+        friday = today
     frm, till = monday.strftime("%Y-%m-%d"), friday.strftime("%Y-%m-%d")
-    
     if market == "index":
         url = ISS_HISTORY.format(market="index", ticker=ticker)
     else:
         url = f"https://iss.moex.com/iss/history/engines/stock/markets/shares/boards/TQBR/securities/{ticker}.json"
-    
     try:
         r = _session().get(url, params={"from": frm, "till": till, "iss.meta": "off"}, timeout=10)
         hist = pd.DataFrame(r.json()["history"]["data"], columns=r.json()["history"]["columns"])
-        if hist.empty or "CLOSE" not in hist.columns: return 0.0, "-"
+        if hist.empty or "CLOSE" not in hist.columns:
+            return 0.0, "-"
         last_row = hist.sort_values("TRADEDATE").iloc[-1]
         return float(last_row["CLOSE"]), str(last_row["TRADEDATE"])
     except Exception:
         return 0.0, "-"
+
 
 @st.cache_data(ttl=None, show_spinner=False)
 def fetch_many_extreme_closes(tickers: list[str], date_val) -> dict[str, float]:
@@ -112,7 +116,6 @@ def fetch_many_extreme_closes(tickers: list[str], date_val) -> dict[str, float]:
     with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
         future_to_ticker = {executor.submit(fetch_extreme_close, t, date_val, "shares"): t for t in tickers}
         try:
-            # Ждем максимум 60 секунд на весь пул
             for future in concurrent.futures.as_completed(future_to_ticker, timeout=60):
                 t = future_to_ticker[future]
                 try:
@@ -121,47 +124,46 @@ def fetch_many_extreme_closes(tickers: list[str], date_val) -> dict[str, float]:
                 except Exception:
                     result[t] = 0.0
         except concurrent.futures.TimeoutError:
-            pass # Возвращаем то, что успели
+            pass
     return result
+
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def fetch_dividends_dohod(ticker: str) -> dict:
     url = f"https://www.dohod.ru/ik/analytics/dividend/{ticker.lower()}"
     result = {"div_12m": 0.0, "dsi": 0.0}
-    
     try:
         r = _session().get(url, timeout=(10, 15))
         if r.status_code != 200:
             return result
-
-        soup = BeautifulSoup(r.text, 'html.parser')
-        text = soup.get_text(separator=' ', strip=True)
-
-        for keyword in ['DSI', 'стабильности']:
-            matches = re.finditer(rf'{keyword}[^\d]*([\d]+[.,]?[\d]*)', text, re.IGNORECASE)
+        soup = BeautifulSoup(r.text, "html.parser")
+        text = soup.get_text(separator=" ", strip=True)
+        for keyword in ["DSI", "стабильности"]:
+            matches = re.finditer(rf"{keyword}[^\d]*([\d]+[.,]?[\d]*)", text, re.IGNORECASE)
             for match in matches:
                 try:
-                    val_str = match.group(1).replace(',', '.')
+                    val_str = match.group(1).replace(",", ".")
                     val = float(val_str)
-                    if val > 1.0: val = val / 100.0
+                    if val > 1.0:
+                        val = val / 100.0
                     if 0.0 <= val <= 1.0:
                         result["dsi"] = val
                         break
                 except ValueError:
                     pass
-            if result["dsi"] > 0: break
-
-        div_match = re.search(r'Совокупные дивиденды в следующие 12m:\s*([0-9]+[.,]?[0-9]*)\s*руб', text, re.IGNORECASE)
+            if result["dsi"] > 0:
+                break
+        div_match = re.search(r"Совокупные дивиденды в следующие 12m:\s*([0-9]+[.,]?[0-9]*)\s*руб", text, re.IGNORECASE)
         if div_match:
-            result["div_12m"] = float(div_match.group(1).replace(',', '.'))
+            result["div_12m"] = float(div_match.group(1).replace(",", "."))
         else:
-            div_match_alt = re.search(r'след\s*12m\.?\s*\(прогноз\)\s*\|\s*([0-9]+[.,]?[0-9]*)', text, re.IGNORECASE)
+            div_match_alt = re.search(r"след\s*12m\.?\s*\(прогноз\)\s*\|\s*([0-9]+[.,]?[0-9]*)", text, re.IGNORECASE)
             if div_match_alt:
-                result["div_12m"] = float(div_match_alt.group(1).replace(',', '.'))
-
+                result["div_12m"] = float(div_match_alt.group(1).replace(",", "."))
         return result
     except Exception:
         return result
+
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def fetch_many_dividends(tickers: list[str]) -> dict[str, dict]:
@@ -169,7 +171,6 @@ def fetch_many_dividends(tickers: list[str]) -> dict[str, dict]:
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
         future_to_ticker = {executor.submit(fetch_dividends_dohod, t): t for t in tickers}
         try:
-            # Ждем максимум 60 секунд
             for future in concurrent.futures.as_completed(future_to_ticker, timeout=60):
                 t = future_to_ticker[future]
                 try:
@@ -180,12 +181,13 @@ def fetch_many_dividends(tickers: list[str]) -> dict[str, dict]:
             pass
     return result
 
-@st.cache_data(ttl=180, show_spinner=False)
+
+@st.cache_data(ttl=3600, show_spinner=False)
 def fetch_moex_candles(ticker: str, interval: int, days_back: int = 60, market: str = "shares") -> pd.DataFrame:
+    """TTL=3600 (1 час) — обновляется при появлении нового часового бара."""
     frm = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
     till = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
     url = ISS_CANDLES.format(market=market, ticker=ticker)
-    
     chunks, start = [], 0
     for _ in range(30):
         try:
@@ -194,22 +196,22 @@ def fetch_moex_candles(ticker: str, interval: int, days_back: int = 60, market: 
             block = r.json().get("candles") or {}
         except Exception:
             break
-
         data = block.get("data") or []
-        if not data: break
+        if not data:
+            break
         chunks.append(pd.DataFrame(data, columns=block["columns"]))
-
-        if len(data) < 500: break
+        if len(data) < 500:
+            break
         start += 500
         time.sleep(0.1)
-
-    if not chunks: return pd.DataFrame()
+    if not chunks:
+        return pd.DataFrame()
     df = pd.concat(chunks, ignore_index=True).drop_duplicates(subset=["begin"])
-    
     need = {"begin", "open", "high", "low", "close"}
-    if not need.issubset(df.columns): return pd.DataFrame()
-    
+    if not need.issubset(df.columns):
+        return pd.DataFrame()
     df = df.rename(columns={"begin": "Date", "open": "Open", "high": "High", "low": "Low", "close": "Close", "volume": "Volume"})
-    if "Volume" not in df: df["Volume"] = 0
+    if "Volume" not in df:
+        df["Volume"] = 0
     df["Date"] = pd.to_datetime(df["Date"])
     return df.set_index("Date").sort_index().dropna(subset=["Open", "High", "Low", "Close"])[["Open", "High", "Low", "Close", "Volume"]]
