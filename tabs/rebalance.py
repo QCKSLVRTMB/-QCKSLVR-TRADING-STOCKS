@@ -1,6 +1,7 @@
 from __future__ import annotations
 import streamlit as st
 import pandas as pd
+import math
 from core import state
 from core.market import fetch_moex_stocks, fetch_moex_indices, fetch_extreme_close
 from core.ranking import calc_ranking
@@ -29,24 +30,25 @@ def render_rebalance():
     with st.spinner("Расчет баллов акций..."):
         imoex_ext, _ = fetch_extreme_close("IMOEX", extreme_date, market="index")
         imoex_row = df_indices[df_indices['SECID'] == 'IMOEX']
-        imoex_curr = imoex_row['CURRENTVALUE'].values[0] if not imoex_row.empty else 0.0
+        imoex_curr = float(imoex_row['CURRENTVALUE'].values[0]) if not imoex_row.empty else 0.0
         w_forms = state.g("w_formations")
-        cb_rate = state.g("cb_rate")
+        cb_rate = float(state.g("cb_rate", 14.0))
         df_ranked = calc_ranking(df_stocks, w_forms, cb_rate, extreme_date, imoex_ext, imoex_curr)
         score_map = dict(zip(df_ranked["SECID"], df_ranked["total_score"]))
         name_map = dict(zip(df_ranked["SECID"], df_ranked["SHORTNAME"]))
     
     positions = state.g("portfolio_data", [])
-    cash = state.g("portfolio_cash", 0.0)
-    cash_pct = state.g("portfolio_cash_pct", 0.0)
-    target_cash_pct = float(state.g("cash_reserve", 20.0))
+    cash = float(state.g("portfolio_cash", 0.0))
+    cash_pct = float(state.g("portfolio_cash_pct", 0.0))
     
+    # Считаем текущую стоимость акций по рыночной цене (или ТВХ, если цены нет)
     current_stocks_value = 0.0
     for p in positions:
         inst = get_instrument(p["Тикер"], df_stocks)
-        price = inst.price if inst.price > 0 else p["ТВХ"]
-        lot_size = inst.lot_size if inst.lot_size > 0 else 1
-        current_stocks_value += price * p["Лотов"] * lot_size
+        price = float(inst.price) if float(inst.price) > 0 else float(p["ТВХ"])
+        lot_size = float(inst.lot_size) if float(inst.lot_size) > 0 else 1.0
+        lots = float(p["Лотов"])
+        current_stocks_value += price * lots * lot_size
     
     total_portfolio_value = current_stocks_value + cash
     
@@ -55,15 +57,15 @@ def render_rebalance():
     scenario = st.radio(
         "Сценарий распределения:",
         [
-            "Без продажи (Перераспределить весь портфель + кеш)",
-            "С продажей (Жесткое приведение к целевой структуре)",
+            "Без продажи акций (Добавить свободный кеш)",
+            "С продажей акций (Целевая структура)",
             "Тактическая докупка (Распределить ТОЛЬКО текущий свободный кеш)"
         ],
         horizontal=False,
         help=(
             "1. Весь портфель пересчитывается, кеш докупает акции до целевых долей.\n"
             "2. Система может предложить продажу, чтобы достичь целевого % кеша.\n"
-            "3. Идеально для усреднения: распределяется только доступный кеш."
+            "3. Идеально для усреднения: распределяется только доступный кеш, не трогая текущие позиции."
         )
     )
     
@@ -71,7 +73,8 @@ def render_rebalance():
         base_budget = current_stocks_value + cash
         scenario_desc = "Весь портфель перераспределяется за счет докупки"
     elif "С продажей" in scenario:
-        base_budget = total_portfolio_value * (1 - target_cash_pct / 100)
+        target_cash_pct = float(state.g("cash_reserve", 20.0))
+        base_budget = total_portfolio_value * (1 - target_cash_pct / 100.0)
         scenario_desc = f"Приведение к структуре с {target_cash_pct:.1f}% кеша"
     else:
         base_budget = cash
@@ -108,7 +111,7 @@ def render_rebalance():
     st.session_state["rebal_sectors"] = edited_sectors
     state.set_global("rebal_sectors_data", edited_sectors.to_dict('records'))
     
-    total_pct = edited_sectors["Доля, %"].sum()
+    total_pct = float(edited_sectors["Доля, %"].sum())
     if total_pct > 100.0:
         st.markdown(
             f"<div style='background-color: #ffcccc; padding: 10px; border-radius: 5px; color: red; font-weight: bold;'>"
@@ -130,19 +133,19 @@ def render_rebalance():
     
     if not any(st.session_state["rebal_tickers"].values()):
         for p in positions:
-            sec = p.get("Сектор", "Разное")
+            sec = str(p.get("Сектор", "Разное")).strip()
             if sec not in st.session_state["rebal_tickers"]:
                 st.session_state["rebal_tickers"][sec] = []
             if p["Тикер"] not in st.session_state["rebal_tickers"][sec]:
                 st.session_state["rebal_tickers"][sec].append(p["Тикер"])
     
     for _, row in edited_sectors.iterrows():
-        sector = row["Сектор"]
-        pct = row["Доля, %"]
+        sector = str(row["Сектор"]).strip()
+        pct = float(row["Доля, %"])
         if not sector:
             continue
         
-        sector_budget = base_budget * (pct / 100)
+        sector_budget = base_budget * (pct / 100.0)
         st.markdown(f"**{sector}** (Бюджет: {sector_budget:,.0f} ₽)")
         
         default_tickers = st.session_state["rebal_tickers"].get(sector, [])
@@ -165,8 +168,8 @@ def render_rebalance():
     table_rows = []
     
     for _, row in edited_sectors.iterrows():
-        sector = row["Сектор"]
-        pct = row["Доля, %"]
+        sector = str(row["Сектор"]).strip()
+        pct = float(row["Доля, %"])
         if not sector:
             continue
         
@@ -174,37 +177,36 @@ def render_rebalance():
         if not tickers:
             continue
         
-        sector_budget = base_budget * (pct / 100)
-        sector_scores = {t: score_map.get(t, 0) for t in tickers}
+        sector_budget = base_budget * (pct / 100.0)
+        sector_scores = {t: float(score_map.get(t, 0)) for t in tickers}
         total_sector_score = sum(sector_scores.values())
         
         for t in tickers:
             score = sector_scores[t]
             if total_sector_score > 0:
                 planned_amount = sector_budget * (score / total_sector_score)
-                share_in_sector = (score / total_sector_score) * 100
+                share_in_sector = (score / total_sector_score) * 100.0
             else:
                 planned_amount = sector_budget / len(tickers) if len(tickers) > 0 else 0.0
-                share_in_sector = 100 / len(tickers) if len(tickers) > 0 else 0.0
+                share_in_sector = 100.0 / len(tickers) if len(tickers) > 0 else 0.0
             
-            # === НОВОЕ: Доля в портфеле от общей стоимости портфеля ===
-            share_in_portfolio = (planned_amount / total_portfolio_value) * 100 if total_portfolio_value > 0 else 0
+            share_in_portfolio = (planned_amount / total_portfolio_value) * 100.0 if total_portfolio_value > 0 else 0.0
             
             # Находим текущие лоты
             current_lots = 0
             current_tvh = 0.0
             for p in positions:
-                if p["Тикер"] == t:
-                    current_lots = p["Лотов"]
-                    current_tvh = p["ТВХ"]
+                if str(p["Тикер"]).strip() == t:
+                    current_lots = int(float(p["Лотов"]))
+                    current_tvh = float(p["ТВХ"])
                     break
             
             inst = get_instrument(t, df_stocks)
-            price = inst.price if inst.price > 0 else current_tvh
-            lot_size = inst.lot_size if inst.lot_size > 0 else 1
+            price = float(inst.price) if float(inst.price) > 0 else current_tvh
+            lot_size = float(inst.lot_size) if float(inst.lot_size) > 0 else 1.0
             
             if price > 0 and planned_amount > 0:
-                target_lots = int(planned_amount // (price * lot_size))
+                target_lots = int(math.floor((planned_amount / (price * lot_size)) + 0.5))
             else:
                 target_lots = 0
             
@@ -224,7 +226,7 @@ def render_rebalance():
                 "Балл": score,
                 "Планируемая сумма, ₽": planned_amount,
                 "Доля в секторе, %": share_in_sector,
-                "Доля в портфеле, %": share_in_portfolio,  # <-- ДОБАВЛЕНО
+                "Доля в портфеле, %": share_in_portfolio,
                 "Текущие лоты": current_lots,
                 "Целевые лоты": target_lots,
                 "Действие": action_str,
@@ -233,7 +235,7 @@ def render_rebalance():
     if table_rows:
         planned_amounts = {}
         for r in table_rows:
-            planned_amounts[r["Тикер"]] = r["Планируемая сумма, ₽"]
+            planned_amounts[r["Тикер"]] = float(r["Планируемая сумма, ₽"])
         state.set_global("rebalance_planned_amounts", planned_amounts)
     
     if not table_rows:
@@ -242,17 +244,17 @@ def render_rebalance():
     
     df_result = pd.DataFrame(table_rows)
     
-    # === НОВОЕ: Сортировка по "Доля в портфеле, %" по убыванию ===
+    # Сортировка по "Доля в портфеле, %" по убыванию
     df_result = df_result.sort_values("Доля в портфеле, %", ascending=False).reset_index(drop=True)
     
     def style_row(row):
         styles = [""] * len(row)
-        if row["Балл"] == 0:
+        if float(row["Балл"]) == 0:
             styles[3] = "background-color: #F44336; color: white;"
         else:
             styles[3] = "background-color: #4CAF50; color: white;"
         
-        act = row["Действие"]
+        act = str(row["Действие"])
         if "Купить" in act:
             styles[9] = "background-color: #C8E6C9; color: #1B5E20; font-weight: bold;"
         elif "Продать" in act:
@@ -267,7 +269,7 @@ def render_rebalance():
             "Балл": "{:.0f}",
             "Планируемая сумма, ₽": "{:.0f}",
             "Доля в секторе, %": "{:.1f}%",
-            "Доля в портфеле, %": "{:.2f}%",  # <-- ДОБАВЛЕНО
+            "Доля в портфеле, %": "{:.2f}%",
             "Текущие лоты": "{:.0f}",
             "Целевые лоты": "{:.0f}",
         })
@@ -280,11 +282,12 @@ def render_rebalance():
         height=40 + 35 * len(df_result) + 6
     )
     
-    total_planned = df_result["Планируемая сумма, ₽"].sum()
+    total_planned = float(df_result["Планируемая сумма, ₽"].sum())
     st.markdown(f"**Итого распределено:** {total_planned:,.0f} ₽ из {base_budget:,.0f} ₽")
     
     if "Тактическая" in scenario:
-        future_cash_needed = (total_portfolio_value * (target_cash_pct / 100)) - cash
+        target_cash_pct = float(state.g("cash_reserve", 20.0))
+        future_cash_needed = (total_portfolio_value * (target_cash_pct / 100.0)) - cash
         if future_cash_needed > 0:
             st.info(
                 f"💡 **Напоминание:** После этой докупки доля кеша временно снизится. "
