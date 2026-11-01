@@ -1,3 +1,15 @@
 libxml2-dev
 libxslt1-dev
 zlib1g-dev
+chromium
+libnss3
+libatk-bridge2.0-0
+libdrm2
+libxcomposite1
+libxdamage1
+libxrandr2
+libgbm1
+libxshmfence1
+libasound2
+fonts-liberation
+libvulkan1
