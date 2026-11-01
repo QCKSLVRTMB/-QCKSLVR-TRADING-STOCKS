@@ -62,13 +62,13 @@ def _find_cash_by_keywords(df_raw: pd.DataFrame) -> tuple:
     cash_trader = 0.0
     total_cash = 0.0
     margin_loan = 0.0
-    
+
     cash_keywords = ["кеш", "cash", "рубли", "рубль", "баланс", "свободные"]
     margin_keywords = ["плечо", "маржа", "margin", "кредит", "заём"]
-    
+
     for idx, row in df_raw.iterrows():
         first_cell = str(row.iloc[0]).strip().lower() if not pd.isna(row.iloc[0]) else ""
-        
+
         if any(kw in first_cell for kw in cash_keywords):
             for col_idx in range(1, min(5, len(row))):
                 val = row.iloc[col_idx]
@@ -76,7 +76,7 @@ def _find_cash_by_keywords(df_raw: pd.DataFrame) -> tuple:
                 if parsed > 0:
                     cash_trader = parsed
                     break
-        
+
         if any(kw in first_cell for kw in margin_keywords):
             for col_idx in range(1, min(5, len(row))):
                 val = row.iloc[col_idx]
@@ -84,7 +84,7 @@ def _find_cash_by_keywords(df_raw: pd.DataFrame) -> tuple:
                 if parsed > 0:
                     margin_loan = parsed
                     break
-    
+
     return cash_trader, total_cash, margin_loan
 
 
@@ -129,27 +129,46 @@ def _split_class(raw) -> tuple:
 
 
 def _lookup_ticker(name, name_index: dict):
+    """Поиск тикера по названию.
+    
+    ИСПРАВЛЕНИЕ: добавлен fallback — если точный матч по классу не найден,
+    ищем по базе с любым классом. Это нужно, потому что DSI может быть
+    указан для 'Сбербанк-п', а в name_index (из Арсагера) есть только
+    'Сбербанк России' (common). DSI обычно одинаков для обоих типов акций.
+    """
     base, cls = _split_class(name)
     if not base:
         return None
+
+    # 1. Точный матч по базе и классу
     t = name_index.get((base, cls))
     if t:
         return t
+
+    # 2. Fallback: ищем по базе с любым классом (предпочтительно common)
     best, best_len = None, 0
     for (nb, nc), ticker in name_index.items():
-        if nc != cls or not nb:
+        if not nb:
             continue
         if nb.startswith(base) or base.startswith(nb):
             overlap = min(len(nb), len(base))
             if overlap >= 4 and overlap > best_len:
-                best, best_len = ticker, overlap
+                # Приоритет: тот же класс > common > любой другой
+                priority = 2 if nc == cls else (1 if nc == 'common' else 0)
+                best_priority = 2 if (best and name_index.get((best,)) == ticker) else 0
+                if priority > best_priority or (priority == best_priority and overlap > best_len):
+                    best, best_len = ticker, overlap
+
     if best:
         return best
+
+    # 3. Частичное совпадение (вложенность)
     for (nb, nc), ticker in name_index.items():
-        if nc != cls or not nb:
+        if not nb:
             continue
         if (base in nb or nb in base) and min(len(base), len(nb)) >= 3:
             return ticker
+
     return None
 
 
@@ -322,7 +341,6 @@ def _parse_portfolio_any(df_raw: pd.DataFrame, df_stocks: pd.DataFrame) -> tuple
     if df_raw is None or df_raw.empty:
         return [], 0.0
 
-    # === Чтение ячеек B34, B35, B36 ===
     cash_trader = 0.0
     margin_loan = 0.0
     total_cash = 0.0
@@ -486,7 +504,6 @@ with st.sidebar:
         if parsed:
             state.replace_state(parsed)
 
-            # === Восстанавливаем кеш из JSON ===
             portfolio_cash = parsed.get("global", {}).get("portfolio_cash", 0.0)
             if portfolio_cash > 0:
                 st.session_state["ui_cash_rub"] = float(portfolio_cash)
@@ -496,7 +513,6 @@ with st.sidebar:
                     total = stocks_value + portfolio_cash
                     pct = (portfolio_cash / total * 100) if total > 0 else 20.0
                     st.session_state["ui_cash_pct"] = float(pct)
-            # ==========================================
 
             keys_to_delete = ["ui_cash_rub", "ui_cash_pct", "rebal_sectors", "rebal_tickers", "plan_ticker"]
             for k in list(st.session_state.keys()):
