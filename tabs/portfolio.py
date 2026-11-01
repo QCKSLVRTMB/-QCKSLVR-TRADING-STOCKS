@@ -15,14 +15,18 @@ def render_portfolio(df_stocks: pd.DataFrame):
         return
     
     df_port = pd.DataFrame(port_data)
+    
+    # Явное преобразование типов для избежания ошибок умножения float на string
     stocks_value = 0.0
     for p in port_data:
         inst = get_instrument(p["Тикер"], df_stocks)
-        lot_size = inst.lot_size if inst.lot_size > 0 else 1
-        stocks_value += p["ТВХ"] * p["Лотов"] * lot_size
+        lot_size = float(inst.lot_size) if float(inst.lot_size) > 0 else 1.0
+        tvh = float(p["ТВХ"])
+        lots = float(p["Лотов"])
+        stocks_value += tvh * lots * lot_size
     
     def _sync_cash_pct():
-        pct = st.session_state["ui_cash_pct"]
+        pct = float(st.session_state["ui_cash_pct"])
         total = stocks_value / (1 - pct/100) if pct < 100 else stocks_value
         cash = total - stocks_value
         st.session_state["ui_cash_rub"] = float(max(0, cash))
@@ -31,7 +35,7 @@ def render_portfolio(df_stocks: pd.DataFrame):
         state.autosave()
     
     def _sync_cash_rub():
-        cash = st.session_state["ui_cash_rub"]
+        cash = float(st.session_state["ui_cash_rub"])
         total = stocks_value + cash
         pct = (cash / total * 100) if total > 0 else 0
         st.session_state["ui_cash_pct"] = float(pct)
@@ -40,67 +44,75 @@ def render_portfolio(df_stocks: pd.DataFrame):
         state.autosave()
     
     if "ui_cash_pct" not in st.session_state:
-        file_cash = state.g("portfolio_cash_file", 0.0)
+        file_cash = float(state.g("portfolio_cash_file", 0.0))
         total = stocks_value + file_cash
         pct = (file_cash / total * 100) if total > 0 else 20.0
         st.session_state["ui_cash_pct"] = float(pct)
         st.session_state["ui_cash_rub"] = float(file_cash)
     
     st.markdown("#### Баланс счета")
-    mobile = state.g("mobile_view")
+    c1, c2 = st.columns(2)
+    with c1:
+        st.number_input(
+            "Кеш (Рубли)", 
+            value=float(state.g("portfolio_cash", 0.0)), 
+            step=1000.0, format="%.2f", key="ui_cash_rub", on_change=_sync_cash_rub
+        )
+    with c2:
+        st.number_input(
+            "Кеш (%)", 
+            value=float(state.g("portfolio_cash_pct", 20.0)), 
+            step=1.0, format="%.1f", key="ui_cash_pct", on_change=_sync_cash_pct
+        )
     
-    if mobile:
-        st.number_input("Кеш (Рубли)", value=float(state.g("portfolio_cash", 0.0)), step=1000.0, format="%.2f", key="ui_cash_rub", on_change=_sync_cash_rub)
-        st.number_input("Кеш (%)", value=float(state.g("portfolio_cash_pct", 20.0)), step=1.0, format="%.1f", key="ui_cash_pct", on_change=_sync_cash_pct)
-    else:
-        c1, c2 = st.columns(2)
-        with c1:
-            st.number_input("Кеш (Рубли)", value=float(state.g("portfolio_cash", 0.0)), step=1000.0, format="%.2f", key="ui_cash_rub", on_change=_sync_cash_rub)
-        with c2:
-            st.number_input("Кеш (%)", value=float(state.g("portfolio_cash_pct", 20.0)), step=1.0, format="%.1f", key="ui_cash_pct", on_change=_sync_cash_pct)
-    
+    # --- Сравнение с целевым резервом из бокового меню ---
     target_cash_pct = float(state.g("cash_reserve", 20.0))
     current_cash_pct = float(state.g("portfolio_cash_pct", 0.0))
     if target_cash_pct > 0:
         fill_pct = (current_cash_pct / target_cash_pct) * 100
         diff_pct = current_cash_pct - target_cash_pct
-        st.caption(f"Текущий кеш: **{current_cash_pct:.1f}%**. Цель: **{target_cash_pct:.1f}%. Заполнено: **{fill_pct:.1f}%**.")
+        st.caption(
+            f"Текущий кеш составляет **{current_cash_pct:.1f}%** от портфеля. "
+            f"Целевой уровень (из бокового меню): **{target_cash_pct:.1f}%**. "
+            f"Заполнено: **{fill_pct:.1f}%** от нормы."
+        )
         st.progress(min(max(fill_pct / 100, 0.0), 1.0))
         if diff_pct < -0.1:
-            st.info(f"Для достижения нормы необходимо добавить {abs(diff_pct):.1f}% кеша.")
+            st.info(f"Справочно: для достижения нормы {target_cash_pct:.1f}% необходимо добавить {abs(diff_pct):.1f}% кеша.")
         elif diff_pct > 0.1:
-            st.warning(f"Кеш превышает норму на {diff_pct:.1f}%.")
+            st.warning(f"Справочно: кеш превышает норму на {diff_pct:.1f}%.")
     
-    tickers = df_port["Тикер"].tolist()
+    tickers = [str(r["Тикер"]).strip() for r in port_data]
     with st.spinner("Загрузка дивидендов..."):
         divs_data = fetch_many_dividends(tickers)
     
-    cb_rate = state.g("cb_rate", 14.0)
+    cb_rate = float(state.g("cb_rate", 14.0))
     future_divs = state.g("future_dividends", {})
     planned_amounts = state.g("rebalance_planned_amounts", {})
     
     if not planned_amounts:
-        st.warning("Таблица «Ребалансировка» пуста. Рекомендации будут равны 0.")
+        st.warning("Внимание: Таблица «Ребалансировка» пуста. Доступные лоты и рекомендации по действиям будут равны 0.")
     
     rows = []
     total_value = 0.0
     total_cost = 0.0
     for _, r in df_port.iterrows():
-        t = r["Тикер"]
+        t = str(r["Тикер"]).strip()
         avg_price = float(r["ТВХ"])
-        lots = int(r["Лотов"])
+        lots = float(r["Лотов"])
         inst = get_instrument(t, df_stocks)
-        current_price = inst.price if inst.price > 0 else avg_price
-        lot_size = inst.lot_size if inst.lot_size > 0 else 1
+        current_price = float(inst.price) if float(inst.price) > 0 else avg_price
+        lot_size = float(inst.lot_size) if float(inst.lot_size) > 0 else 1.0
         shares = lots * lot_size
         cost = avg_price * shares
         value = current_price * shares
         pl_rub = value - cost
         pl_pct = (current_price / avg_price - 1) * 100 if avg_price > 0 else 0.0
         
-        div_12m = divs_data.get(t, {}).get("div_12m", 0.0)
+        div_12m = float(divs_data.get(t, {}).get("div_12m", 0.0))
         div_yield_tvh = (div_12m / avg_price * 100) if avg_price > 0 else 0.0
-        fut_div_per_share = future_divs.get(t, 0.0)
+        
+        fut_div_per_share = float(future_divs.get(t, 0.0))
         gross_div = fut_div_per_share * shares
         net_div = gross_div * (1 - 0.13)
         
@@ -113,16 +125,16 @@ def render_portfolio(df_stocks: pd.DataFrame):
         else:
             asset_color = "red"
         
-        target_amount = planned_amounts.get(t, 0.0)
+        target_amount = float(planned_amounts.get(t, 0.0))
         tvh_safe = avg_price if avg_price > 0 else current_price
         if tvh_safe > 0 and target_amount > 0:
-            target_lots = math.floor((target_amount / (tvh_safe * lot_size)) + 0.5)
+            target_lots = int(math.floor((target_amount / (tvh_safe * lot_size)) + 0.5))
         else:
             target_lots = 0
         
         if div_yield_tvh > 0 and cb_rate > 0 and target_lots > 0:
-            lots_by_yield = math.floor((target_lots * (div_yield_tvh / cb_rate)) + 0.5)
-            action_lots = lots_by_yield - lots
+            lots_by_yield = int(math.floor((target_lots * (div_yield_tvh / cb_rate)) + 0.5))
+            action_lots = lots_by_yield - int(lots)
             if action_lots > 0:
                 action_str = f"Купить {action_lots}"
             elif action_lots < 0:
@@ -141,7 +153,7 @@ def render_portfolio(df_stocks: pd.DataFrame):
             "Вид актива": asset_color,
             "Рыночная цена": current_price,
             "ТВХ": avg_price,
-            "Лотов": lots,
+            "Лотов": int(lots),
             "Прибыль или убыток": pl_rub,
             "P/L %": pl_pct,
             "Дивиденды за 12 мес.": div_12m,
@@ -162,20 +174,26 @@ def render_portfolio(df_stocks: pd.DataFrame):
         elif color == "yellow": styles[2] = "background-color: #FFEB3B; color: #FFEB3B;"
         elif color == "orange": styles[2] = "background-color: #FF9800; color: #FF9800;"
         elif color == "red":    styles[2] = "background-color: #F44336; color: #F44336;"
-        if row["Прибыль или убыток"] > 0:
+        if float(row["Прибыль или убыток"]) > 0:
             styles[6] = "color: #4CAF50; font-weight: bold;"
             styles[7] = "color: #4CAF50; font-weight: bold;"
-        elif row["Прибыль или убыток"] < 0:
+        elif float(row["Прибыль или убыток"]) < 0:
             styles[6] = "color: #F44336; font-weight: bold;"
             styles[7] = "color: #F44336; font-weight: bold;"
-        act = row["Действия"]
+        act = str(row["Действия"])
         if "Купить" in act:
             styles[13] = "background-color: #C8E6C9; color: #1B5E20; font-weight: bold;"
         elif "Продать" in act:
             styles[13] = "background-color: #FFCDD2; color: #B71C1C; font-weight: bold;"
         return styles
     
-    display_df = df_res[["Название", "Тикер", "Вид актива", "Рыночная цена", "ТВХ", "Лотов", "Прибыль или убыток", "P/L %", "Дивиденды за 12 мес.", "Див брутто", "Див нетто", "Доступно лотов", "Лотов по доходности", "Действия"]].copy()
+    display_df = df_res[[
+        "Название", "Тикер", "Вид актива", "Рыночная цена", "ТВХ", "Лотов",
+        "Прибыль или убыток", "P/L %", 
+        "Дивиденды за 12 мес.", "Див брутто", "Див нетто", 
+        "Доступно лотов", "Лотов по доходности", "Действия"
+    ]].copy()
+    
     styled_df = (
         display_df.style
         .apply(style_pl, axis=1)
@@ -194,5 +212,15 @@ def render_portfolio(df_stocks: pd.DataFrame):
         })
     )
     
-    st.dataframe(styled_df, use_container_width=True, hide_index=True, height=40 + 35 * len(df_res) + 6)
-    st.caption(f"Всего позиций: {len(df_res)} · Стоимость акций: {total_value:.0f} ₽ · Вложено: {total_cost:.0f} ₽ · P/L: {total_value - total_cost:+.0f} ₽")
+    st.dataframe(
+        styled_df,
+        use_container_width=True,
+        hide_index=True,
+        height=40 + 35 * len(df_res) + 6
+    )
+    st.caption(
+        f"Всего позиций: {len(df_res)} · "
+        f"Стоимость акций: {total_value:.0f} ₽ · "
+        f"Вложено: {total_cost:.0f} ₽ · "
+        f"Общий P/L: {total_value - total_cost:+.0f} ₽"
+    )
