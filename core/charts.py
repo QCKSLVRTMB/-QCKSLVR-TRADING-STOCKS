@@ -30,6 +30,12 @@ def _rect(x0, x1, y0, y1, fillcolor, layer="below"):
 def draw_channel(fig, pts, x_right, color="blue"):
     if len(pts) < 3: return
     t_a, y_a = pts[0][:2]; t_b, y_b = pts[1][:2]; t_c, y_c = pts[2][:2]
+    # ЗАЩИТА: Принудительная конвертация цен в float
+    try:
+        y_a, y_b, y_c = float(y_a), float(y_b), float(y_c)
+    except (ValueError, TypeError):
+        return
+        
     x_a, x_c = _ts(t_a), _ts(t_c)
     dt = (x_c - x_a).total_seconds() or 1
     k = (y_c - y_a) / dt
@@ -48,14 +54,21 @@ def draw_channel(fig, pts, x_right, color="blue"):
 def draw_fib(fig, pts, x_left, x_right, color, label):
     pts = sort_points(pts)
     if len(pts) < 2: return
-    mid_price = (float(pts[0][1]) + float(pts[1][1])) / 2
+    try:
+        y1, y2 = float(pts[0][1]), float(pts[1][1])
+    except (ValueError, TypeError):
+        return
+    mid_price = (y1 + y2) / 2
     _add_shapes(fig, [_sh(x_left, mid_price, x_right, mid_price, color, dash="dash", width=2)])
     _add_annots(fig, [dict(xref="x", yref="y", x=x_right, y=mid_price, text=label, showarrow=False, xanchor="left", font=dict(color=color, size=10))])
 
 def draw_zigzag(fig, pts, color, name):
     pts = sort_points(pts)
     if len(pts) < 2: return
-    xs, ys = [_ts(p[0]) for p in pts], [float(p[1]) for p in pts]
+    try:
+        xs, ys = [_ts(p[0]) for p in pts], [float(p[1]) for p in pts]
+    except (ValueError, TypeError):
+        return
     fig.add_trace(go.Scatter(x=xs, y=ys, mode="lines+markers", line=dict(color=color, width=3), marker=dict(size=8, color=color), name=name), row=1, col=1)
 
 def draw_clusters(fig, clusters, x_left, x_right, color="orange"):
