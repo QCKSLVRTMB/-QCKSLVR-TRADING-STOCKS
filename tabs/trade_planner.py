@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 import hashlib
 import pandas as pd
 import numpy as np
@@ -30,7 +31,7 @@ def _cached_volume_profile(
     if df_slice.empty:
         return []
     colors = get_volume_colors(df_slice, "H1")
-    return calculate_volume_profile(df_slice, "H1", threshold_pct, colors)
+    return calculate_volume_profile(df_slice, "H1", int(threshold_pct), colors)
 
 
 def snap_points(pts, df):
@@ -80,11 +81,10 @@ def render_trade_planner(ticker: str, df_stocks: pd.DataFrame):
 
     with st.spinner("Загрузка дивидендов..."):
         divs = fetch_dividends_dohod(ticker)
-    div_12m = divs.get("div_12m", 0.0)
+    div_12m = float(divs.get("div_12m", 0.0))
 
     st.subheader(f"{ticker} — {inst.name}")
 
-    # === МОБИЛЬНАЯ АДАПТАЦИЯ: метрики в 2 колонки на мобильном ===
     if mobile:
         c1, c2 = st.columns(2)
         c1.metric("Цена", f"{inst.price:.2f} ₽", f"{inst.change_pct:+.2f}%" if hasattr(inst, 'change_pct') else None)
@@ -105,7 +105,7 @@ def render_trade_planner(ticker: str, df_stocks: pd.DataFrame):
         m3, m4 = st.columns(2)
     else:
         m1, m2, m3, m4 = st.columns(4)
-    
+
     if port_item:
         tvh = float(port_item["ТВХ"])
         lots = int(port_item["Лотов"])
@@ -196,34 +196,49 @@ def render_trade_planner(ticker: str, df_stocks: pd.DataFrame):
 
     st.markdown("#### Графики рынка")
     if mobile:
-        show_clusters = st.toggle("Кластеры объемов (H1)", value=tdata.get("show_clusters", False), key=f"clu_{ticker}")
+        show_clusters = st.toggle("Кластеры объемов (H1)", value=bool(tdata.get("show_clusters", False)), key=f"clu_{ticker}")
         tdata["show_clusters"] = show_clusters
-        show_custom_clusters = st.toggle("Диапазон кластеров (W)", value=tdata.get("show_custom_clusters", False), key=f"clu_custom_{ticker}")
+        show_custom_clusters = st.toggle("Диапазон кластеров (W)", value=bool(tdata.get("show_custom_clusters", False)), key=f"clu_custom_{ticker}")
         tdata["show_custom_clusters"] = show_custom_clusters
     else:
         c_tog1, c_tog2 = st.columns(2)
         with c_tog1:
-            show_clusters = st.toggle("Кластеры объемов (H1)", value=tdata.get("show_clusters", False), key=f"clu_{ticker}")
+            show_clusters = st.toggle("Кластеры объемов (H1)", value=bool(tdata.get("show_clusters", False)), key=f"clu_{ticker}")
             tdata["show_clusters"] = show_clusters
         with c_tog2:
-            show_custom_clusters = st.toggle("Диапазон кластеров (W)", value=tdata.get("show_custom_clusters", False), key=f"clu_custom_{ticker}")
+            show_custom_clusters = st.toggle("Диапазон кластеров (W)", value=bool(tdata.get("show_custom_clusters", False)), key=f"clu_custom_{ticker}")
             tdata["show_custom_clusters"] = show_custom_clusters
 
     clusters_data = []
     custom_clusters_data = []
     if show_clusters or show_custom_clusters:
-        overlap_pct = st.slider("Порог отсечения кластеров", 10, 100, tdata.get("cluster_threshold", 50), 5, key=f"clu_bins_{ticker}")
-        tdata["cluster_threshold"] = int(overlap_pct)
+        # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: явное преобразование в int для избежания ошибки ufunc multiply
+        overlap_pct = int(st.slider(
+            "Порог отсечения кластеров",
+            10, 100,
+            int(tdata.get("cluster_threshold", 50)),
+            5,
+            key=f"clu_bins_{ticker}"
+        ))
+        tdata["cluster_threshold"] = overlap_pct
 
         df_h1_for_hash = fetch_moex_candles(ticker, interval=60, days_back=730)
-        df_hash = hashlib.md5(pd.util.hash_pandas_object(df_h1_for_hash).values.tobytes()).hexdigest() if not df_h1_for_hash.empty else "empty"
+        df_hash = hashlib.md5(
+            pd.util.hash_pandas_object(df_h1_for_hash).values.tobytes()
+        ).hexdigest() if not df_h1_for_hash.empty else "empty"
 
         if show_clusters:
             w_pts = tdata["charts"]["W"].get("channel", [])
             if len(w_pts) == 3:
                 cluster_start_time = pd.to_datetime(w_pts[2][0])
                 cluster_end_time = datetime.now()
-                clusters_data = _cached_volume_profile(ticker, cluster_start_time.isoformat(), cluster_end_time.isoformat(), overlap_pct, df_hash)
+                clusters_data = _cached_volume_profile(
+                    ticker,
+                    cluster_start_time.isoformat(),
+                    cluster_end_time.isoformat(),
+                    overlap_pct,
+                    df_hash
+                )
                 if not clusters_data:
                     st.caption("В зоне канала нет аномальных объёмов H1.")
 
@@ -233,21 +248,31 @@ def render_trade_planner(ticker: str, df_stocks: pd.DataFrame):
                 t1 = pd.to_datetime(cr_pts[0][0])
                 t2 = pd.to_datetime(cr_pts[1][0])
                 t_start, t_end = min(t1, t2), max(t1, t2)
-                custom_clusters_data = _cached_volume_profile(ticker, t_start.isoformat(), t_end.isoformat(), overlap_pct, df_hash)
+                custom_clusters_data = _cached_volume_profile(
+                    ticker,
+                    t_start.isoformat(),
+                    t_end.isoformat(),
+                    overlap_pct,
+                    df_hash
+                )
                 if not custom_clusters_data:
                     st.caption("В выбранном диапазоне нет аномальных объёмов H1.")
 
     chart_tabs = st.tabs([cfg["label"] for cfg in INTERVALS.values()])
     for tab, (tf_name, cfg) in zip(chart_tabs, INTERVALS.items()):
         with tab:
-            _render_tf_chart(ticker, tf_name, cfg, inst, tdata, mobile, old_tvh_line, new_avg_line, buy_level, sell_level, clusters_data, custom_clusters_data)
+            _render_tf_chart(
+                ticker, tf_name, cfg, inst, tdata, mobile,
+                old_tvh_line, new_avg_line, buy_level, sell_level,
+                clusters_data, custom_clusters_data
+            )
 
     state.autosave()
 
 
 @st.fragment
 def _render_tf_chart(ticker, tf_name, cfg, inst, tdata, mobile, old_tvh, new_avg, buy_level, sell_level, clusters_data, custom_clusters_data):
-    """Fragment-обёртка: при клике ререндер происходит только внутри фрагмента."""
+    """Fragment-обёртка: при клике ререндер происходит только внутри фрагмента, масштаб сохраняется."""
     chart_data = tdata["charts"][tf_name]
 
     if tf_name == "W":
@@ -258,15 +283,14 @@ def _render_tf_chart(ticker, tf_name, cfg, inst, tdata, mobile, old_tvh, new_avg
         available_tools = ["zigzag", "fib_h1"]
 
     tool_labels = {"cluster_range": "Диапазон кластеров"}
-    
-    # === МОБИЛЬНАЯ АДАПТАЦИЯ: вертикальные колонки на мобильном ===
+
     if mobile:
         tool = seg("Инструмент", available_tools, key=f"tool_{ticker}_{tf_name}", default=available_tools[0], fmt=lambda x: tool_labels.get(x, TOOLS.get(x, x))) or available_tools[0]
-        show_tools = st.toggle("Разметка", value=chart_data.get("show_tools", True), key=f"tools_{ticker}_{tf_name}")
+        show_tools = st.toggle("Разметка", value=bool(chart_data.get("show_tools", True)), key=f"tools_{ticker}_{tf_name}")
         chart_data["show_tools"] = bool(show_tools)
-        show_position = st.toggle("Позиция", value=chart_data.get("show_position", True), key=f"pos_{ticker}_{tf_name}")
+        show_position = st.toggle("Позиция", value=bool(chart_data.get("show_position", True)), key=f"pos_{ticker}_{tf_name}")
         chart_data["show_position"] = bool(show_position)
-        show_info = st.toggle("Информация", value=chart_data.get("show_info", True), key=f"info_{ticker}_{tf_name}")
+        show_info = st.toggle("Информация", value=bool(chart_data.get("show_info", True)), key=f"info_{ticker}_{tf_name}")
         chart_data["show_info"] = bool(show_info)
     else:
         c1, c2 = st.columns([1, 1])
@@ -274,11 +298,11 @@ def _render_tf_chart(ticker, tf_name, cfg, inst, tdata, mobile, old_tvh, new_avg
             tool = seg("Инструмент", available_tools, key=f"tool_{ticker}_{tf_name}", default=available_tools[0], fmt=lambda x: tool_labels.get(x, TOOLS.get(x, x))) or available_tools[0]
         with c2:
             cc1, cc2 = st.columns(2)
-            show_tools = cc1.toggle("Разметка", value=chart_data.get("show_tools", True), key=f"tools_{ticker}_{tf_name}")
+            show_tools = cc1.toggle("Разметка", value=bool(chart_data.get("show_tools", True)), key=f"tools_{ticker}_{tf_name}")
             chart_data["show_tools"] = bool(show_tools)
-            show_position = cc1.toggle("Позиция", value=chart_data.get("show_position", True), key=f"pos_{ticker}_{tf_name}")
+            show_position = cc1.toggle("Позиция", value=bool(chart_data.get("show_position", True)), key=f"pos_{ticker}_{tf_name}")
             chart_data["show_position"] = bool(show_position)
-            show_info = cc2.toggle("Информация", value=chart_data.get("show_info", True), key=f"info_{ticker}_{tf_name}")
+            show_info = cc2.toggle("Информация", value=bool(chart_data.get("show_info", True)), key=f"info_{ticker}_{tf_name}")
             chart_data["show_info"] = bool(show_info)
 
     if tf_name == "W":
@@ -291,7 +315,6 @@ def _render_tf_chart(ticker, tf_name, cfg, inst, tdata, mobile, old_tvh, new_avg
     if target_tool not in chart_data:
         chart_data[target_tool] = []
 
-    # === МОБИЛЬНАЯ АДАПТАЦИЯ: полноширинные кнопки ===
     if mobile:
         if st.button("↩ Отменить", key=f"undo_{ticker}_{tf_name}", use_container_width=True):
             if chart_data.get(target_tool):
@@ -377,6 +400,7 @@ def _render_tf_chart(ticker, tf_name, cfg, inst, tdata, mobile, old_tvh, new_avg
                         new_pts = [[str(t_start), float(y_start)], [str(t_mid), float(y_mid)], [str(t_end), float(y_end)]]
 
             elif tool == "cluster_range":
+                # НОВАЯ ЛОГИКА: сравниваем CLOSE баров
                 if len(new_pts) == 0:
                     new_pts.append([str(bar.name), float(bar['Close'])])
                 elif len(new_pts) == 1:
@@ -472,7 +496,6 @@ def _render_tf_chart(ticker, tf_name, cfg, inst, tdata, mobile, old_tvh, new_avg
     if show_position:
         charts.draw_trade_visuals(fig, old_tvh, new_avg, buy_level, sell_level, x_left, x_right, inst.decimals)
 
-    # === МОБИЛЬНАЯ АДАПТАЦИЯ: отключаем selection_mode на мобильном для удобства touch ===
     if mobile:
         st.plotly_chart(fig, use_container_width=True, key=chart_key, config=charts.PLOT_CONFIG)
     else:
