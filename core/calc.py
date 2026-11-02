@@ -80,9 +80,10 @@ class _Bars:
     __slots__ = ("idx", "high", "low", "vol", "cvol")
     def __init__(self, df: pd.DataFrame):
         self.idx = df.index
-        self.high = df["High"].to_numpy(dtype="float64", copy=False)
-        self.low = df["Low"].to_numpy(dtype="float64", copy=False)
-        self.vol = df["Volume"].to_numpy(dtype="float64", copy=False)
+        # ИСПРАВЛЕНИЕ: Принудительная конвертация в float с заменой строк на 0
+        self.high = pd.to_numeric(df["High"], errors="coerce").fillna(0).to_numpy(dtype="float64", copy=False)
+        self.low = pd.to_numeric(df["Low"], errors="coerce").fillna(0).to_numpy(dtype="float64", copy=False)
+        self.vol = pd.to_numeric(df["Volume"], errors="coerce").fillna(0).to_numpy(dtype="float64", copy=False)
         self.cvol = np.concatenate(([0.0], np.cumsum(self.vol)))
 
     def span(self, t0, t1) -> tuple[int, int]:
@@ -154,7 +155,8 @@ def _anomaly_color(tf_name: str) -> str | None:
 
 def get_volume_colors(df, tf_name, sensitivity=3.0):
     if df is None or df.empty or "Volume" not in df.columns: return []
-    v = df["Volume"].to_numpy(dtype="float64", copy=False)
+    # ИСПРАВЛЕНИЕ: Безопасная конвертация в float
+    v = pd.to_numeric(df["Volume"], errors="coerce").fillna(0).to_numpy(dtype="float64", copy=False)
     n = v.size
     colors = np.full(n, "gray", dtype=object)
 
@@ -167,7 +169,7 @@ def get_volume_colors(df, tf_name, sensitivity=3.0):
     if anomaly and n:
         avg = (pd.Series(v).rolling(20, min_periods=5).mean().shift(1).to_numpy(dtype="float64"))
         with np.errstate(invalid="ignore"):
-            mask = np.isfinite(avg) & (avg > 0) & (v > avg * sensitivity)
+            mask = np.isfinite(avg) & (avg > 0) & (v > avg * float(sensitivity))
         colors[mask] = anomaly
     return colors.tolist()
 
@@ -180,11 +182,12 @@ def calculate_volume_profile(df, tf_name="H1", threshold_pct=50, sensitivity=3.0
     mask = (colors == "black") | ((colors == anomaly) if anomaly else False)
     if not mask.any(): return []
 
-    o = df["Open"].to_numpy(dtype="float64", copy=False)[mask]
-    c = df["Close"].to_numpy(dtype="float64", copy=False)[mask]
-    h = df["High"].to_numpy(dtype="float64", copy=False)[mask]
-    l = df["Low"].to_numpy(dtype="float64", copy=False)[mask]
-    vol = df["Volume"].to_numpy(dtype="float64", copy=False)[mask]
+    # ИСПРАВЛЕНИЕ: Безопасная конвертация всех колонок в float перед математикой
+    o = pd.to_numeric(df["Open"], errors="coerce").fillna(0).to_numpy(dtype="float64", copy=False)[mask]
+    c = pd.to_numeric(df["Close"], errors="coerce").fillna(0).to_numpy(dtype="float64", copy=False)[mask]
+    h = pd.to_numeric(df["High"], errors="coerce").fillna(0).to_numpy(dtype="float64", copy=False)[mask]
+    l = pd.to_numeric(df["Low"], errors="coerce").fillna(0).to_numpy(dtype="float64", copy=False)[mask]
+    vol = pd.to_numeric(df["Volume"], errors="coerce").fillna(0).to_numpy(dtype="float64", copy=False)[mask]
 
     is_buy = c > o
     low = np.where(is_buy, l, c)
