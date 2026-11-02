@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 import hashlib
 import pandas as pd
 import numpy as np
@@ -31,7 +30,7 @@ def _cached_volume_profile(
     if df_slice.empty:
         return []
     colors = get_volume_colors(df_slice, "H1")
-    return calculate_volume_profile(df_slice, "H1", int(threshold_pct), colors)
+    return calculate_volume_profile(df_slice, "H1", threshold_pct, colors)
 
 
 def snap_points(pts, df):
@@ -81,18 +80,32 @@ def render_trade_planner(ticker: str, df_stocks: pd.DataFrame):
 
     with st.spinner("Загрузка дивидендов..."):
         divs = fetch_dividends_dohod(ticker)
-    div_12m = float(divs.get("div_12m", 0.0))
+    div_12m = divs.get("div_12m", 0.0)
 
     st.subheader(f"{ticker} — {inst.name}")
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Цена", f"{inst.price:.2f} ₽", f"{inst.change_pct:+.2f}%" if hasattr(inst, 'change_pct') else None)
-    c2.metric("Лот", f"{inst.lot_size} шт.")
-    c3.metric("Стоимость лота", f"{inst.lot_value:.2f} ₽")
-    c4.metric("Листинг", f"{inst.list_level} ур.")
+    # === МОБИЛЬНАЯ АДАПТАЦИЯ: метрики в 2 колонки на мобильном ===
+    if mobile:
+        c1, c2 = st.columns(2)
+        c1.metric("Цена", f"{inst.price:.2f} ₽", f"{inst.change_pct:+.2f}%" if hasattr(inst, 'change_pct') else None)
+        c2.metric("Лот", f"{inst.lot_size} шт.")
+        c3, c4 = st.columns(2)
+        c3.metric("Стоимость лота", f"{inst.lot_value:.2f} ₽")
+        c4.metric("Листинг", f"{inst.list_level} ур.")
+    else:
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Цена", f"{inst.price:.2f} ₽", f"{inst.change_pct:+.2f}%" if hasattr(inst, 'change_pct') else None)
+        c2.metric("Лот", f"{inst.lot_size} шт.")
+        c3.metric("Стоимость лота", f"{inst.lot_value:.2f} ₽")
+        c4.metric("Листинг", f"{inst.list_level} ур.")
 
     st.markdown("#### Текущие метрики (из портфеля)")
-    m1, m2, m3, m4 = st.columns(4)
+    if mobile:
+        m1, m2 = st.columns(2)
+        m3, m4 = st.columns(2)
+    else:
+        m1, m2, m3, m4 = st.columns(4)
+    
     if port_item:
         tvh = float(port_item["ТВХ"])
         lots = int(port_item["Лотов"])
@@ -109,25 +122,19 @@ def render_trade_planner(ticker: str, df_stocks: pd.DataFrame):
     m4.metric("Выплата на акцию (12м)", f"{div_12m:.2f} ₽" if div_12m > 0 else "—")
 
     st.markdown("#### Параметры сделки")
-    c_sl, c_tp = st.columns(2)
-    with c_sl:
-        buy_level = st.number_input(
-            "Уровень покупок",
-            value=float(tdata.get("buy_level") or 0.0),
-            step=float(inst.min_step),
-            format=f"%.{inst.decimals}f",
-            key=f"buy_{ticker}"
-        )
+    if mobile:
+        buy_level = st.number_input("Уровень покупок", value=float(tdata.get("buy_level") or 0.0), step=float(inst.min_step), format=f"%.{inst.decimals}f", key=f"buy_{ticker}")
         tdata["buy_level"] = float(buy_level) if buy_level > 0 else None
-    with c_tp:
-        sell_level = st.number_input(
-            "Уровень продаж",
-            value=float(tdata.get("sell_level") or 0.0),
-            step=float(inst.min_step),
-            format=f"%.{inst.decimals}f",
-            key=f"sell_{ticker}"
-        )
+        sell_level = st.number_input("Уровень продаж", value=float(tdata.get("sell_level") or 0.0), step=float(inst.min_step), format=f"%.{inst.decimals}f", key=f"sell_{ticker}")
         tdata["sell_level"] = float(sell_level) if sell_level > 0 else None
+    else:
+        c_sl, c_tp = st.columns(2)
+        with c_sl:
+            buy_level = st.number_input("Уровень покупок", value=float(tdata.get("buy_level") or 0.0), step=float(inst.min_step), format=f"%.{inst.decimals}f", key=f"buy_{ticker}")
+            tdata["buy_level"] = float(buy_level) if buy_level > 0 else None
+        with c_tp:
+            sell_level = st.number_input("Уровень продаж", value=float(tdata.get("sell_level") or 0.0), step=float(inst.min_step), format=f"%.{inst.decimals}f", key=f"sell_{ticker}")
+            tdata["sell_level"] = float(sell_level) if sell_level > 0 else None
 
     st.markdown("#### Расчет усреднения (ТВХ)")
     if "entries" not in tdata:
@@ -164,11 +171,7 @@ def render_trade_planner(ticker: str, df_stocks: pd.DataFrame):
             q_val = r.get("Лотов")
             if pd.isna(p_val) or pd.isna(q_val):
                 continue
-            tdata["entries"].append({
-                "price": float(p_val),
-                "qty": int(q_val),
-                "note": str(r.get("Комментарий", ""))
-            })
+            tdata["entries"].append({"price": float(p_val), "qty": int(q_val), "note": str(r.get("Комментарий", ""))})
 
         calc_df = edited.dropna(subset=["Цена", "Лотов"])
         total_lots = calc_df["Лотов"].sum()
@@ -177,62 +180,50 @@ def render_trade_planner(ticker: str, df_stocks: pd.DataFrame):
             avg_price = total_cost / (total_lots * inst.lot_size)
             new_avg_line = avg_price
             st.markdown("##### Результат усреднения")
-            r1, r2, r3 = st.columns(3)
-            r1.metric("Средняя цена (ТВХ)", f"{avg_price:.2f} ₽")
-            new_yield = (div_12m / avg_price * 100) if (avg_price > 0 and div_12m > 0) else 0.0
-            r2.metric("Див. доходность (после усреднения)", f"{new_yield:.2f}%")
-            if sell_level > 0:
-                r3.metric("Доходность до продажи", f"{(sell_level / avg_price - 1) * 100:.2f}%")
-            elif buy_level > 0:
-                r3.metric("Риск до покупки", f"{(1 - buy_level / avg_price) * 100:.2f}%")
+            if mobile:
+                r1, r2 = st.columns(2)
+                r1.metric("Средняя цена (ТВХ)", f"{avg_price:.2f} ₽")
+                r2.metric("Див. доходность (после усреднения)", f"{(div_12m / avg_price * 100) if (avg_price > 0 and div_12m > 0) else 0.0:.2f}%")
+            else:
+                r1, r2, r3 = st.columns(3)
+                r1.metric("Средняя цена (ТВХ)", f"{avg_price:.2f} ₽")
+                new_yield = (div_12m / avg_price * 100) if (avg_price > 0 and div_12m > 0) else 0.0
+                r2.metric("Див. доходность (после усреднения)", f"{new_yield:.2f}%")
+                if sell_level > 0:
+                    r3.metric("Доходность до продажи", f"{(sell_level / avg_price - 1) * 100:.2f}%")
+                elif buy_level > 0:
+                    r3.metric("Риск до покупки", f"{(1 - buy_level / avg_price) * 100:.2f}%")
 
     st.markdown("#### Графики рынка")
-    c_tog1, c_tog2 = st.columns(2)
-    with c_tog1:
-        show_clusters = st.toggle(
-            "Кластеры объемов (H1)",
-            value=bool(tdata.get("show_clusters", False)),
-            key=f"clu_{ticker}"
-        )
+    if mobile:
+        show_clusters = st.toggle("Кластеры объемов (H1)", value=tdata.get("show_clusters", False), key=f"clu_{ticker}")
         tdata["show_clusters"] = show_clusters
-    with c_tog2:
-        show_custom_clusters = st.toggle(
-            "Диапазон кластеров (W)",
-            value=bool(tdata.get("show_custom_clusters", False)),
-            key=f"clu_custom_{ticker}"
-        )
+        show_custom_clusters = st.toggle("Диапазон кластеров (W)", value=tdata.get("show_custom_clusters", False), key=f"clu_custom_{ticker}")
         tdata["show_custom_clusters"] = show_custom_clusters
+    else:
+        c_tog1, c_tog2 = st.columns(2)
+        with c_tog1:
+            show_clusters = st.toggle("Кластеры объемов (H1)", value=tdata.get("show_clusters", False), key=f"clu_{ticker}")
+            tdata["show_clusters"] = show_clusters
+        with c_tog2:
+            show_custom_clusters = st.toggle("Диапазон кластеров (W)", value=tdata.get("show_custom_clusters", False), key=f"clu_custom_{ticker}")
+            tdata["show_custom_clusters"] = show_custom_clusters
 
     clusters_data = []
     custom_clusters_data = []
     if show_clusters or show_custom_clusters:
-        # ЗАЩИТНОЕ ПРЕОБРАЗОВАНИЕ: гарантированно int
-        overlap_pct = int(st.slider(
-            "Порог отсечения кластеров",
-            10, 100,
-            int(tdata.get("cluster_threshold", 50)),
-            5,
-            key=f"clu_bins_{ticker}"
-        ))
-        tdata["cluster_threshold"] = overlap_pct
+        overlap_pct = st.slider("Порог отсечения кластеров", 10, 100, tdata.get("cluster_threshold", 50), 5, key=f"clu_bins_{ticker}")
+        tdata["cluster_threshold"] = int(overlap_pct)
 
         df_h1_for_hash = fetch_moex_candles(ticker, interval=60, days_back=730)
-        df_hash = hashlib.md5(
-            pd.util.hash_pandas_object(df_h1_for_hash).values.tobytes()
-        ).hexdigest() if not df_h1_for_hash.empty else "empty"
+        df_hash = hashlib.md5(pd.util.hash_pandas_object(df_h1_for_hash).values.tobytes()).hexdigest() if not df_h1_for_hash.empty else "empty"
 
         if show_clusters:
             w_pts = tdata["charts"]["W"].get("channel", [])
             if len(w_pts) == 3:
                 cluster_start_time = pd.to_datetime(w_pts[2][0])
                 cluster_end_time = datetime.now()
-                clusters_data = _cached_volume_profile(
-                    ticker,
-                    cluster_start_time.isoformat(),
-                    cluster_end_time.isoformat(),
-                    overlap_pct,
-                    df_hash
-                )
+                clusters_data = _cached_volume_profile(ticker, cluster_start_time.isoformat(), cluster_end_time.isoformat(), overlap_pct, df_hash)
                 if not clusters_data:
                     st.caption("В зоне канала нет аномальных объёмов H1.")
 
@@ -242,30 +233,21 @@ def render_trade_planner(ticker: str, df_stocks: pd.DataFrame):
                 t1 = pd.to_datetime(cr_pts[0][0])
                 t2 = pd.to_datetime(cr_pts[1][0])
                 t_start, t_end = min(t1, t2), max(t1, t2)
-                custom_clusters_data = _cached_volume_profile(
-                    ticker,
-                    t_start.isoformat(),
-                    t_end.isoformat(),
-                    overlap_pct,
-                    df_hash
-                )
+                custom_clusters_data = _cached_volume_profile(ticker, t_start.isoformat(), t_end.isoformat(), overlap_pct, df_hash)
                 if not custom_clusters_data:
                     st.caption("В выбранном диапазоне нет аномальных объёмов H1.")
 
     chart_tabs = st.tabs([cfg["label"] for cfg in INTERVALS.values()])
     for tab, (tf_name, cfg) in zip(chart_tabs, INTERVALS.items()):
         with tab:
-            _render_tf_chart(
-                ticker, tf_name, cfg, inst, tdata, mobile,
-                old_tvh_line, new_avg_line, buy_level, sell_level,
-                clusters_data, custom_clusters_data
-            )
+            _render_tf_chart(ticker, tf_name, cfg, inst, tdata, mobile, old_tvh_line, new_avg_line, buy_level, sell_level, clusters_data, custom_clusters_data)
 
     state.autosave()
 
 
 @st.fragment
 def _render_tf_chart(ticker, tf_name, cfg, inst, tdata, mobile, old_tvh, new_avg, buy_level, sell_level, clusters_data, custom_clusters_data):
+    """Fragment-обёртка: при клике ререндер происходит только внутри фрагмента."""
     chart_data = tdata["charts"][tf_name]
 
     if tf_name == "W":
@@ -276,35 +258,28 @@ def _render_tf_chart(ticker, tf_name, cfg, inst, tdata, mobile, old_tvh, new_avg
         available_tools = ["zigzag", "fib_h1"]
 
     tool_labels = {"cluster_range": "Диапазон кластеров"}
-    c1, c2 = st.columns([1, 1])
-    with c1:
-        tool = seg(
-            "Инструмент",
-            available_tools,
-            key=f"tool_{ticker}_{tf_name}",
-            default=available_tools[0],
-            fmt=lambda x: tool_labels.get(x, TOOLS.get(x, x))
-        ) or available_tools[0]
-    with c2:
-        cc1, cc2 = st.columns(2)
-        show_tools = cc1.toggle(
-            "Разметка",
-            value=chart_data.get("show_tools", True),
-            key=f"tools_{ticker}_{tf_name}"
-        )
+    
+    # === МОБИЛЬНАЯ АДАПТАЦИЯ: вертикальные колонки на мобильном ===
+    if mobile:
+        tool = seg("Инструмент", available_tools, key=f"tool_{ticker}_{tf_name}", default=available_tools[0], fmt=lambda x: tool_labels.get(x, TOOLS.get(x, x))) or available_tools[0]
+        show_tools = st.toggle("Разметка", value=chart_data.get("show_tools", True), key=f"tools_{ticker}_{tf_name}")
         chart_data["show_tools"] = bool(show_tools)
-        show_position = cc1.toggle(
-            "Позиция",
-            value=chart_data.get("show_position", True),
-            key=f"pos_{ticker}_{tf_name}"
-        )
+        show_position = st.toggle("Позиция", value=chart_data.get("show_position", True), key=f"pos_{ticker}_{tf_name}")
         chart_data["show_position"] = bool(show_position)
-        show_info = cc2.toggle(
-            "Информация",
-            value=chart_data.get("show_info", True),
-            key=f"info_{ticker}_{tf_name}"
-        )
+        show_info = st.toggle("Информация", value=chart_data.get("show_info", True), key=f"info_{ticker}_{tf_name}")
         chart_data["show_info"] = bool(show_info)
+    else:
+        c1, c2 = st.columns([1, 1])
+        with c1:
+            tool = seg("Инструмент", available_tools, key=f"tool_{ticker}_{tf_name}", default=available_tools[0], fmt=lambda x: tool_labels.get(x, TOOLS.get(x, x))) or available_tools[0]
+        with c2:
+            cc1, cc2 = st.columns(2)
+            show_tools = cc1.toggle("Разметка", value=chart_data.get("show_tools", True), key=f"tools_{ticker}_{tf_name}")
+            chart_data["show_tools"] = bool(show_tools)
+            show_position = cc1.toggle("Позиция", value=chart_data.get("show_position", True), key=f"pos_{ticker}_{tf_name}")
+            chart_data["show_position"] = bool(show_position)
+            show_info = cc2.toggle("Информация", value=chart_data.get("show_info", True), key=f"info_{ticker}_{tf_name}")
+            chart_data["show_info"] = bool(show_info)
 
     if tf_name == "W":
         target_tool = tool if tool in ["channel", "cluster_range"] else "fib"
@@ -316,16 +291,28 @@ def _render_tf_chart(ticker, tf_name, cfg, inst, tdata, mobile, old_tvh, new_avg
     if target_tool not in chart_data:
         chart_data[target_tool] = []
 
-    b1, b2 = st.columns(2)
-    if b1.button("Отменить", key=f"undo_{ticker}_{tf_name}", use_container_width=True):
-        if chart_data.get(target_tool):
-            chart_data[target_tool].pop()
+    # === МОБИЛЬНАЯ АДАПТАЦИЯ: полноширинные кнопки ===
+    if mobile:
+        if st.button("↩ Отменить", key=f"undo_{ticker}_{tf_name}", use_container_width=True):
+            if chart_data.get(target_tool):
+                chart_data[target_tool].pop()
+                state.autosave(force=True)
+                st.rerun()
+        if st.button("🗑 Очистить", key=f"clr_{ticker}_{tf_name}", use_container_width=True):
+            chart_data[target_tool] = []
             state.autosave(force=True)
             st.rerun()
-    if b2.button("Очистить", key=f"clr_{ticker}_{tf_name}", use_container_width=True):
-        chart_data[target_tool] = []
-        state.autosave(force=True)
-        st.rerun()
+    else:
+        b1, b2 = st.columns(2)
+        if b1.button("Отменить", key=f"undo_{ticker}_{tf_name}", use_container_width=True):
+            if chart_data.get(target_tool):
+                chart_data[target_tool].pop()
+                state.autosave(force=True)
+                st.rerun()
+        if b2.button("Очистить", key=f"clr_{ticker}_{tf_name}", use_container_width=True):
+            chart_data[target_tool] = []
+            state.autosave(force=True)
+            st.rerun()
 
     df = fetch_moex_candles(ticker, cfg["interval"], cfg["days_back"])
     if df.empty:
@@ -421,4 +408,74 @@ def _render_tf_chart(ticker, tf_name, cfg, inst, tdata, mobile, old_tvh, new_avg
 
             else:
                 if len(new_pts) == 0:
-                    new_pts.append([str(bar.name), float(bar['High']) if abs(y-float(bar['High']))<abs
+                    new_pts.append([str(bar.name), float(bar['High']) if abs(y-float(bar['High']))<abs(y-float(bar['Low'])) else float(bar['Low'])])
+                elif len(new_pts) == 1:
+                    if y > new_pts[0][1]:
+                        new_pts[0] = [new_pts[0][0], float(view.loc[pd.to_datetime(new_pts[0][0]), 'Low'])]
+                        new_pts.append([str(bar.name), float(bar['High'])])
+                    else:
+                        new_pts[0] = [new_pts[0][0], float(view.loc[pd.to_datetime(new_pts[0][0]), 'High'])]
+                        new_pts.append([str(bar.name), float(bar['Low'])])
+
+        if new_pts != pts:
+            chart_data[target_tool] = new_pts
+            state.autosave(force=True)
+            st.rerun()
+
+    w_ch_s, w_fib_s = tdata["charts"]["W"].get("channel", []), tdata["charts"]["W"].get("fib", [])
+    w_cr_s = tdata["charts"]["W"].get("cluster_range", [])
+    d1_ch_s = tdata["charts"]["D1"].get("channel", [])
+    d1_zig_s, d1_fib_s = tdata["charts"]["D1"].get("zigzag", []), tdata["charts"]["D1"].get("fib", [])
+    h1_zig_s, h1_fib_s = tdata["charts"]["H1"].get("zigzag", []), tdata["charts"]["H1"].get("fib", [])
+
+    if tf_name == "W":
+        w_ch_s = snap_points(w_ch_s, view)
+        w_fib_s = snap_points(w_fib_s, view)
+        w_cr_s = snap_points(w_cr_s, view)
+    elif tf_name == "D1":
+        d1_ch_s = snap_points(d1_ch_s, view)
+        d1_zig_s = snap_points(d1_zig_s, view)
+        d1_fib_s = snap_points(d1_fib_s, view)
+    elif tf_name == "H1":
+        h1_zig_s = snap_points(h1_zig_s, view)
+        h1_fib_s = snap_points(h1_fib_s, view)
+
+    fig = charts.build_figure(view, tf_name=tf_name, title=f"{ticker} — {tf_name}", decimals=inst.decimals, mobile=mobile, show_info=show_info)
+
+    time_buffer = pd.Timedelta(days=10) if tf_name in ["D1", "W"] else pd.Timedelta(hours=12)
+    x_left = view.index[0]
+    x_right = view.index[-1] + time_buffer
+
+    if clusters_data:
+        charts.draw_clusters(fig, clusters_data, x_left, x_right, color="orange")
+    if custom_clusters_data:
+        charts.draw_clusters(fig, custom_clusters_data, x_left, x_right, color="blue")
+
+    if show_tools:
+        if w_ch_s:
+            charts.draw_channel(fig, w_ch_s, x_right, color="purple")
+        if w_fib_s:
+            charts.draw_fib(fig, w_fib_s, x_left, x_right, "purple", "0.5 W")
+        if w_cr_s and len(w_cr_s) == 2:
+            charts.draw_zigzag(fig, w_cr_s, "#2196F3", "Диапазон W")
+        if d1_ch_s:
+            charts.draw_channel(fig, d1_ch_s, x_right, color="blue")
+        if d1_zig_s:
+            charts.draw_zigzag(fig, d1_zig_s, "#26a69a", "Тенденция (D1)")
+        if d1_fib_s:
+            charts.draw_fib(fig, d1_fib_s, x_left, x_right, "blue", "0.5 D1")
+        if h1_zig_s and tf_name in ["D1", "H1"]:
+            charts.draw_zigzag(fig, h1_zig_s, "#ef5350", "Зигзаг (H1)")
+        if h1_fib_s and tf_name == "H1":
+            charts.draw_fib(fig, h1_fib_s, x_left, x_right, "green", "0.5 H1")
+
+    if show_position:
+        charts.draw_trade_visuals(fig, old_tvh, new_avg, buy_level, sell_level, x_left, x_right, inst.decimals)
+
+    # === МОБИЛЬНАЯ АДАПТАЦИЯ: отключаем selection_mode на мобильном для удобства touch ===
+    if mobile:
+        st.plotly_chart(fig, use_container_width=True, key=chart_key, config=charts.PLOT_CONFIG)
+    else:
+        st.plotly_chart(fig, use_container_width=True, key=chart_key, on_select="rerun", selection_mode="points", config=charts.PLOT_CONFIG)
+
+    st.caption(f"Диапазон: {view.index[0].strftime('%d.%m.%Y %H:%M')} – {view.index[-1].strftime('%d.%m.%Y %H:%M')} · Баров: {len(view)}")
