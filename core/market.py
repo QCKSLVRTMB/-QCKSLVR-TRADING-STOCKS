@@ -184,7 +184,6 @@ def fetch_many_dividends(tickers: list[str]) -> dict[str, dict]:
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_moex_candles(ticker: str, interval: int, days_back: int = 60, market: str = "shares") -> pd.DataFrame:
-    """TTL=3600 (1 час) — обновляется при появлении нового часового бара."""
     frm = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
     till = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
     url = ISS_CANDLES.format(market=market, ticker=ticker)
@@ -210,8 +209,18 @@ def fetch_moex_candles(ticker: str, interval: int, days_back: int = 60, market: 
     need = {"begin", "open", "high", "low", "close"}
     if not need.issubset(df.columns):
         return pd.DataFrame()
+    
     df = df.rename(columns={"begin": "Date", "open": "Open", "high": "High", "low": "Low", "close": "Close", "volume": "Volume"})
     if "Volume" not in df:
-        df["Volume"] = 0
-    df["Date"] = pd.to_datetime(df["Date"])
-    return df.set_index("Date").sort_index().dropna(subset=["Open", "High", "Low", "Close"])[["Open", "High", "Low", "Close", "Volume"]]
+        df["Volume"] = 0.0
+        
+    df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+    
+    # ИСПРАВЛЕНИЕ: Принудительно приводим все колонки к float, чтобы избежать ошибки "ufunc multiply"
+    for col in ["Open", "High", "Low", "Close", "Volume"]:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+        
+    df = df.set_index("Date").sort_index().dropna(subset=["Open", "High", "Low", "Close"])
+    df["Volume"] = df["Volume"].fillna(0.0)
+    
+    return df[["Open", "High", "Low", "Close", "Volume"]]
