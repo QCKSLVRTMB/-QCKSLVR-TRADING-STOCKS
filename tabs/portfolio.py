@@ -181,7 +181,6 @@ def render_portfolio(df_stocks: pd.DataFrame):
     def style_pl(row):
         styles = [""] * len(row)
         color = row["Вид актива"]
-        # Цвет ячейки "Вид актива" по цвету вида актива
         if color == "green":
             styles[2] = "background-color: #4CAF50; color: #4CAF50;"
         elif color == "yellow":
