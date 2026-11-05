@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import streamlit as st
 import pandas as pd
+import math
 from core import state
 from core.market import fetch_moex_stocks, fetch_moex_indices, fetch_extreme_close
 from core.ranking import calc_ranking
@@ -36,13 +37,16 @@ def render_rebalance():
         imoex_curr = float(imoex_row["CURRENTVALUE"].values[0]) if not imoex_row.empty else 0.0
         w_forms = state.g("w_formations")
         cb_rate = float(state.g("cb_rate", 14.0))
-        # ВАЖНО: передаём portfolio_data, чтобы score_div считался по ТВХ для акций портфеля
+        # Передаём portfolio_data, чтобы score_div считался по ТВХ для акций портфеля
         df_ranked = calc_ranking(
             df_stocks, w_forms, cb_rate, extreme_date, imoex_ext, imoex_curr,
             portfolio_data=positions,
         )
         score_map = dict(zip(df_ranked["SECID"], df_ranked["total_score"]))
         name_map = dict(zip(df_ranked["SECID"], df_ranked["SHORTNAME"]))
+
+    # Сохраняем score_map в state для использования в portfolio.py
+    state.set_global("rebal_score_map", score_map)
 
     cash = float(state.g("portfolio_cash", 0.0))
     cash_pct = float(state.g("portfolio_cash_pct", 0.0))
@@ -214,7 +218,7 @@ def render_rebalance():
             lot_size = float(inst.lot_size) if float(inst.lot_size) > 0 else 1.0
 
             if price > 0 and planned_amount > 0:
-                target_lots = int(planned_amount // (price * lot_size))
+                target_lots = int(math.floor((planned_amount / (price * lot_size)) + 0.5))
             else:
                 target_lots = 0
 
@@ -255,10 +259,14 @@ def render_rebalance():
 
     def style_row(row):
         styles = [""] * len(row)
-        if float(row["Балл"]) == 0:
-            styles[3] = "background-color: #F44336; color: white;"
+        score = float(row["Балл"])
+        # Подсветка баллов
+        if score >= 700:
+            styles[3] = "background-color: #4CAF50; color: white; font-weight: bold;"
+        elif score >= 500:
+            styles[3] = "background-color: #FFEB3B; color: black; font-weight: bold;"
         else:
-            styles[3] = "background-color: #4CAF50; color: white;"
+            styles[3] = "background-color: #F44336; color: white; font-weight: bold;"
 
         act = str(row["Действие"])
         if "Купить" in act:
