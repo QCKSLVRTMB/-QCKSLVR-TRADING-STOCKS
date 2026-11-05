@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 import streamlit as st
 import pandas as pd
 import math
@@ -21,6 +22,7 @@ def render_portfolio(df_stocks: pd.DataFrame):
     cb_rate = float(state.g("cb_rate", 14.0))
     index_div_yield = float(state.g("index_div_yield", 0.0))
 
+    # Рассчитываем рейтинг с учётом portfolio_data (score_div по ТВХ)
     with st.spinner("Расчёт рейтинга акций портфеля..."):
         df_indices = fetch_moex_indices()
         imoex_ext, _ = fetch_extreme_close("IMOEX", extreme_date, market="index")
@@ -37,7 +39,7 @@ def render_portfolio(df_stocks: pd.DataFrame):
     for p in port_data:
         inst = get_instrument(p["Тикер"], df_stocks)
         lot_size = inst.lot_size if inst.lot_size > 0 else 1
-        stocks_value += p["ТВХ"] * p["Лотов"] * lot_size
+        stocks_value += float(p["ТВХ"]) * float(p["Лотов"]) * lot_size
 
     def _sync_cash_pct():
         pct = st.session_state["ui_cash_pct"]
@@ -93,6 +95,8 @@ def render_portfolio(df_stocks: pd.DataFrame):
         divs_data = fetch_many_dividends(tickers)
 
     future_divs = state.g("future_dividends", {})
+    if not isinstance(future_divs, dict):
+        future_divs = {}
     planned_amounts = state.g("rebalance_planned_amounts", {})
     overrides = state.g("ticker_overrides", {})
 
@@ -105,9 +109,9 @@ def render_portfolio(df_stocks: pd.DataFrame):
     total_value = 0.0
     total_cost = 0.0
     for _, r in df_port.iterrows():
-        t = r["Тикер"]
+        t = str(r["Тикер"]).strip()
         avg_price = float(r["ТВХ"])
-        lots = int(r["Лотов"])
+        lots = int(float(r["Лотов"]))
         inst = get_instrument(t, df_stocks)
         current_price = inst.price if inst.price > 0 else avg_price
         lot_size = inst.lot_size if inst.lot_size > 0 else 1
@@ -140,6 +144,7 @@ def render_portfolio(df_stocks: pd.DataFrame):
         else:
             asset_color = "red"
 
+        # Балл из рассчитанного рейтинга (с учётом ТВХ)
         ticker_score = score_map.get(t, 0)
 
         target_amount = planned_amounts.get(t, 0.0)
@@ -189,15 +194,23 @@ def render_portfolio(df_stocks: pd.DataFrame):
     def style_pl(row):
         styles = [""] * len(row)
         color = row["Вид актива"]
-        if color == "green": styles[2] = "background-color: #4CAF50; color: #4CAF50;"
-        elif color == "yellow": styles[2] = "background-color: #FFEB3B; color: #FFEB3B;"
-        elif color == "orange": styles[2] = "background-color: #FF9800; color: #FF9800;"
-        elif color == "red": styles[2] = "background-color: #F44336; color: #F44336;"
+        if color == "green":
+            styles[2] = "background-color: #4CAF50; color: #4CAF50;"
+        elif color == "yellow":
+            styles[2] = "background-color: #FFEB3B; color: #FFEB3B;"
+        elif color == "orange":
+            styles[2] = "background-color: #FF9800; color: #FF9800;"
+        elif color == "red":
+            styles[2] = "background-color: #F44336; color: #F44336;"
 
+        # Подсветка баллов
         score = float(row["Баллы"])
-        if score >= 700: styles[3] = "background-color: #4CAF50; color: white; font-weight: bold;"
-        elif score >= 500: styles[3] = "background-color: #FFEB3B; color: black; font-weight: bold;"
-        else: styles[3] = "background-color: #F44336; color: white; font-weight: bold;"
+        if score >= 700:
+            styles[3] = "background-color: #4CAF50; color: white; font-weight: bold;"
+        elif score >= 500:
+            styles[3] = "background-color: #FFEB3B; color: black; font-weight: bold;"
+        else:
+            styles[3] = "background-color: #F44336; color: white; font-weight: bold;"
 
         if row["Прибыль или убыток"] > 0:
             styles[7] = "color: #4CAF50; font-weight: bold;"
@@ -216,8 +229,10 @@ def render_portfolio(df_stocks: pd.DataFrame):
             styles[10] = "background-color: #F44336; color: white; font-weight: bold;"
 
         act = row["Действия"]
-        if "Купить" in act: styles[15] = "background-color: #C8E6C9; color: #1B5E20; font-weight: bold;"
-        elif "Продать" in act: styles[15] = "background-color: #FFCDD2; color: #B71C1C; font-weight: bold;"
+        if "Купить" in act:
+            styles[15] = "background-color: #C8E6C9; color: #1B5E20; font-weight: bold;"
+        elif "Продать" in act:
+            styles[15] = "background-color: #FFCDD2; color: #B71C1C; font-weight: bold;"
         return styles
 
     display_df = df_res[[
@@ -247,4 +262,9 @@ def render_portfolio(df_stocks: pd.DataFrame):
     )
 
     st.dataframe(styled_df, use_container_width=True, hide_index=True, height=40 + 35 * len(df_res) + 6)
-    st.caption(f"Всего позиций: {len(df_res)} · Стоимость акций: {total_value:.0f} ₽ · Вложено: {total_cost:.0f} ₽ · Общий P/L: {total_value - total_cost:+.0f} ₽")
+    st.caption(
+        f"Всего позиций: {len(df_res)} · "
+        f"Стоимость акций: {total_value:.0f} ₽ · "
+        f"Вложено: {total_cost:.0f} ₽ · "
+        f"Общий P/L: {total_value - total_cost:+.0f} ₽"
+    )
