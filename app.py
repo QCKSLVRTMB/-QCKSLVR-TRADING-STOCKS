@@ -90,6 +90,11 @@ def _find_cash_by_keywords(df_raw: pd.DataFrame) -> tuple:
 def _parse_rebalance_table(df_raw: pd.DataFrame) -> tuple[list[dict], dict]:
     """Парсинг таблицы ребалансировки из Excel.
     Возвращает (sectors_data, tickers_data).
+    
+    Формат таблицы:
+    - Столбец G: Название сектора (Нефтегаз, Финансовый, и т.д.)
+    - Столбец H: Процент в портфеле (число)
+    - Столбец I: Тикеры через пробел (SNGSP LKOH TATNP ...)
     """
     sectors_data = []
     tickers_data = {}
