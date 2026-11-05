@@ -25,7 +25,15 @@ def _dsi_to_score(v) -> float:
     return float(min(max(x, 0.0), 100.0))
 
 
-def calc_ranking(df: pd.DataFrame, state_w_forms: dict, cb_rate: float, extreme_date: str, imoex_ext: float, imoex_curr: float, portfolio_data: list = None) -> pd.DataFrame:
+def calc_ranking(
+    df: pd.DataFrame,
+    state_w_forms: dict,
+    cb_rate: float,
+    extreme_date: str,
+    imoex_ext: float,
+    imoex_curr: float,
+    portfolio_data: list = None,
+) -> pd.DataFrame:
     df = df.copy()
 
     # Создаём словарь ТВХ по портфелю для расчёта доходности по средней цене покупки
@@ -40,22 +48,24 @@ def calc_ranking(df: pd.DataFrame, state_w_forms: dict, cb_rate: float, extreme_
                 except (TypeError, ValueError):
                     pass
 
+    # Получаем корректировки из вкладки "Отладка"
+    overrides = state.g("ticker_overrides", {})
+    if not isinstance(overrides, dict):
+        overrides = {}
+
     # 1. W-формация
     w_forms = state_w_forms if state_w_forms else DEFAULT_W_FORMATIONS
     w_scores = {"вверх": 100, "рейндж": 50, "вниз": 0}
     df["w_form"] = df["SECID"].map(w_forms).fillna("-").astype(str).str.lower().str.strip()
     df["score_w"] = df["w_form"].map(w_scores).fillna(0)
 
-    # 2. Арсагера и DSI
+    # 2. Арсагера и DSI с приоритетом: Excel > overrides > default
     fund_data = state.g("fundamental_data", {})
     if not isinstance(fund_data, dict):
         fund_data = {}
 
-    overrides = state.g("ticker_overrides", {})
-    if not isinstance(overrides, dict):
-        overrides = {}
-
     def get_ars_score(ticker):
+        # Приоритет: Excel (fundamental_data) > overrides > default
         if ticker in fund_data and fund_data[ticker].get("ars_group"):
             group = fund_data[ticker]["ars_group"]
         elif ticker in overrides and overrides[ticker].get("ars_group"):
@@ -65,14 +75,15 @@ def calc_ranking(df: pd.DataFrame, state_w_forms: dict, cb_rate: float, extreme_
         return {1: 100, 2: 75, 3: 50, 4: 25}.get(group, 0)
 
     def get_dsi_val(ticker):
+        # Приоритет: Excel (fundamental_data) > overrides > default
         if ticker in fund_data and fund_data[ticker].get("dsi"):
             return fund_data[ticker]["dsi"]
         elif ticker in overrides and overrides[ticker].get("dsi"):
             return overrides[ticker]["dsi"]
         return 0.0
 
-    df["ars_group"] = df["SECID"].apply(
-        lambda t: fund_data.get(t, {}).get("ars_group", 0)
+    df["ars_group"] = df["SECID"].apply(lambda t:
+        fund_data.get(t, {}).get("ars_group", 0)
         if t in fund_data
         else overrides.get(t, {}).get("ars_group", 0)
         if t in overrides
@@ -105,8 +116,21 @@ def calc_ranking(df: pd.DataFrame, state_w_forms: dict, cb_rate: float, extreme_
     df["rel_strength"] = df.apply(get_rel_strength, axis=1)
     df["score_strength"] = (df["rel_strength"] > 0).astype(int) * 100
 
-    # 5. Дивиденды
-    df["div_12m"] = df["SECID"].apply(lambda t: divs_data.get(t, {}).get("div_12m", 0.0))
+    # 5. Дивиденды с приоритетами: Excel > overrides > dohod.ru
+    future_divs = state.g("future_dividends", {})
+    if not isinstance(future_divs, dict):
+        future_divs = {}
+
+    def get_div_12m(ticker):
+        # Приоритет: Excel (future_dividends) > overrides > dohod.ru
+        if ticker in future_divs:
+            return future_divs[ticker]
+        elif ticker in overrides and overrides[ticker].get("div_12m"):
+            return overrides[ticker]["div_12m"]
+        else:
+            return divs_data.get(ticker, {}).get("div_12m", 0.0)
+
+    df["div_12m"] = df["SECID"].apply(get_div_12m)
 
     # Дивидендная доходность по рынку (для отображения в таблице рейтинга)
     df["div_yield"] = df.apply(
@@ -115,7 +139,7 @@ def calc_ranking(df: pd.DataFrame, state_w_forms: dict, cb_rate: float, extreme_
 
     # Дивидендная доходность по ТВХ (для акций портфеля)
     df["div_yield_tvh"] = df["SECID"].apply(
-        lambda t: (divs_data.get(t, {}).get("div_12m", 0.0) / tvh_map[t] * 100)
+        lambda t: (df.loc[df["SECID"] == t, "div_12m"].values[0] / tvh_map[t] * 100)
         if t in tvh_map and tvh_map[t] > 0
         else 0.0
     )
