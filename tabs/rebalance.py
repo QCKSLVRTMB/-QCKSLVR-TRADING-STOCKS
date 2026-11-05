@@ -1,11 +1,9 @@
-from __future__ import annotations
-
 import streamlit as st
 import pandas as pd
 import math
 from core import state
 from core.market import fetch_moex_stocks, fetch_moex_indices, fetch_extreme_close
-from core.ranking import calc_ranking
+from core.ranking import calc_ranking, get_asset_color
 from core.calc import get_instrument
 
 DEFAULT_SECTORS = [
@@ -44,9 +42,6 @@ def render_rebalance():
         )
         score_map = dict(zip(df_ranked["SECID"], df_ranked["total_score"]))
         name_map = dict(zip(df_ranked["SECID"], df_ranked["SHORTNAME"]))
-
-    # Сохраняем score_map в state для использования в portfolio.py
-    state.set_global("rebal_score_map", score_map)
 
     cash = float(state.g("portfolio_cash", 0.0))
     cash_pct = float(state.g("portfolio_cash_pct", 0.0))
@@ -260,7 +255,7 @@ def render_rebalance():
     def style_row(row):
         styles = [""] * len(row)
         score = float(row["Балл"])
-        # Подсветка баллов
+        # Подсветка баллов: зелёный >= 700, жёлтый >= 500, красный < 500
         if score >= 700:
             styles[3] = "background-color: #4CAF50; color: white; font-weight: bold;"
         elif score >= 500:
