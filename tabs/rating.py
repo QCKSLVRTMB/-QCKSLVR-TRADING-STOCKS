@@ -17,6 +17,7 @@ def render_rating():
     df_stocks = df_stocks[df_stocks["PRICE"] > 0].copy()
     extreme_date = state.g("extreme_date")
     cb_rate = float(state.g("cb_rate", 14.0))
+    # ИСПРАВЛЕНИЕ: получаем index_div_yield из state
     index_div_yield = float(state.g("index_div_yield", 0.0))
 
     with st.spinner(f"Расчёт рейтинга для {len(df_stocks)} бумаг..."):
@@ -81,6 +82,7 @@ def render_rating():
     df = df.sort_values(col, ascending=asc).reset_index(drop=True)
 
     st.caption(f"Показано **{len(df)}** из **{len(df_all)}** бумаг")
+    # ИСПРАВЛЕНИЕ: отображаем index_div_yield
     st.caption(f"Ставка ЦБ: **{cb_rate:.2f}%** | Доходность индекса стаб.див: **{index_div_yield*100:.2f}%**")
 
     if df.empty:
