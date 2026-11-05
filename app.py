@@ -14,7 +14,6 @@ from tabs.portfolio import render_portfolio
 from tabs.rebalance import render_rebalance
 from tabs.dashboard import render_dashboard
 from tabs.trade_planner import render_trade_planner
-from tabs.debug import render_debug
 from ui.theme import inject_css, seg
 
 st.set_page_config(page_title=APP_TITLE, layout="wide", initial_sidebar_state="expanded")
@@ -88,6 +87,75 @@ def _find_cash_by_keywords(df_raw: pd.DataFrame) -> tuple:
     return cash_trader, total_cash, margin_loan
 
 
+def _parse_rebalance_table(df_raw: pd.DataFrame) -> tuple[list[dict], dict]:
+    """Парсинг таблицы ребалансировки из Excel.
+    Возвращает (sectors_data, tickers_data).
+    """
+    sectors_data = []
+    tickers_data = {}
+    
+    # Ищем строку с заголовком "Сектор"
+    header_row_idx = None
+    for idx, row in df_raw.iterrows():
+        for val in row.values:
+            if pd.notna(val) and "сектор" in str(val).lower().strip():
+                header_row_idx = idx
+                break
+        if header_row_idx is not None:
+            break
+    
+    if header_row_idx is None:
+        return sectors_data, tickers_data
+    
+    # Читаем данные после заголовка
+    for idx in range(header_row_idx + 1, len(df_raw)):
+        row = df_raw.iloc[idx]
+        
+        # Проверяем, не дошли ли до строки "ИТОГО"
+        first_val = str(row.iloc[0]).strip().lower() if pd.notna(row.iloc[0]) else ""
+        if "итого" in first_val:
+            break
+        
+        sector = None
+        pct = 0.0
+        tickers_str = ""
+        
+        for col_idx in range(len(row)):
+            val = row.iloc[col_idx]
+            if pd.isna(val):
+                continue
+            val_str = str(val).strip()
+            
+            # Проверяем, является ли это названием сектора
+            if sector is None and val_str in ["Нефтегаз", "Финансовый", "Металлы и добыча", "Энергетика", 
+                                               "Телекомы", "Потребительский", "Химия", "Инновации",
+                                               "Транспорт", "ИТ", "Строительство", "Разное"]:
+                sector = val_str
+            # Проверяем, является ли это процентом
+            elif sector is not None and pct == 0.0:
+                try:
+                    pct_val = float(val_str.replace(',', '.'))
+                    if 0 <= pct_val <= 100:
+                        pct = pct_val
+                except (ValueError, TypeError):
+                    pass
+            # Если уже есть сектор и процент, это могут быть тикеры
+            elif sector is not None and pct > 0:
+                # Проверяем, похожи ли значения на тикеры (заглавные буквы, 2-10 символов)
+                if re.match(r'^[A-ZА-Я0-9]{2,10}$', val_str):
+                    tickers_str += val_str + " "
+        
+        if sector:
+            sectors_data.append({"Сектор": sector, "Доля, %": pct})
+            if tickers_str.strip():
+                tickers = [t.strip() for t in tickers_str.split() if re.match(r'^[A-ZА-Я0-9]{2,10}$', t.strip())]
+                tickers_data[sector] = tickers
+            else:
+                tickers_data[sector] = []
+    
+    return sectors_data, tickers_data
+
+
 # ============================================================
 # Excel-парсеры
 # ============================================================
@@ -105,7 +173,7 @@ def _norm(text) -> str:
     return re.sub(r'[^\wа-яё]', '', str(text).strip().lower(), flags=re.IGNORECASE)
 
 
-def _split_class(raw) -> tuple:
+def _split_class(raw) -> tuple[str, str]:
     if pd.isna(raw):
         return "", "common"
     s_raw = str(raw).strip().lower()
@@ -117,25 +185,19 @@ def _split_class(raw) -> tuple:
         if s_raw.endswith(pat) and len(s_raw) > len(pat):
             m = _norm(pat)
             if m and s_norm.endswith(m):
-                return s_norm[:-len(m)], 'preferred'
-            return s_norm, 'preferred'
+                return s_norm[: -len(m)], "preferred"
+            return s_norm, "preferred"
     for pat in ('-ord', ' ord', '-ао', ' ао', '-ao', ' ao'):
         if s_raw.endswith(pat) and len(s_raw) > len(pat):
             m = _norm(pat)
             if m and s_norm.endswith(m):
-                return s_norm[:-len(m)], 'common'
-            return s_norm, 'common'
-    return s_norm, 'common'
+                return s_norm[: -len(m)], "common"
+            return s_norm, "common"
+    return s_norm, "common"
 
 
 def _lookup_ticker(name, name_index: dict):
-    """Поиск тикера по названию.
-    
-    ИСПРАВЛЕНИЕ: добавлен fallback — если точный матч по классу не найден,
-    ищем по базе с любым классом. Это нужно, потому что DSI может быть
-    указан для 'Сбербанк-п', а в name_index (из Арсагера) есть только
-    'Сбербанк России' (common). DSI обычно одинаков для обоих типов акций.
-    """
+    """Поиск тикера по названию с fallback на любой класс акций."""
     base, cls = _split_class(name)
     if not base:
         return None
@@ -145,24 +207,22 @@ def _lookup_ticker(name, name_index: dict):
     if t:
         return t
 
-    # 2. Fallback: ищем по базе с любым классом (предпочтительно common)
-    best, best_len = None, 0
+    # 2. Fallback: ищем по базе с любым классом (приоритет: тот же класс > common > любой)
+    best, best_len, best_priority = None, 0, -1
     for (nb, nc), ticker in name_index.items():
         if not nb:
             continue
         if nb.startswith(base) or base.startswith(nb):
             overlap = min(len(nb), len(base))
             if overlap >= 4 and overlap > best_len:
-                # Приоритет: тот же класс > common > любой другой
-                priority = 2 if nc == cls else (1 if nc == 'common' else 0)
-                best_priority = 2 if (best and name_index.get((best,)) == ticker) else 0
+                priority = 2 if nc == cls else (1 if nc == "common" else 0)
                 if priority > best_priority or (priority == best_priority and overlap > best_len):
-                    best, best_len = ticker, overlap
+                    best, best_len, best_priority = ticker, overlap, priority
 
     if best:
         return best
 
-    # 3. Частичное совпадение (вложенность)
+    # 3. Частичное совпадение
     for (nb, nc), ticker in name_index.items():
         if not nb:
             continue
@@ -172,7 +232,7 @@ def _lookup_ticker(name, name_index: dict):
     return None
 
 
-def _parse_arsagera(df_ars) -> tuple:
+def _parse_arsagera(df_ars) -> tuple[dict, dict]:
     ars_dict, name_index = {}, {}
     if df_ars is None or df_ars.empty:
         return ars_dict, name_index
@@ -185,7 +245,7 @@ def _parse_arsagera(df_ars) -> tuple:
             if pd.isna(t_raw) or pd.isna(n_raw):
                 continue
             ticker = str(t_raw).strip().upper()
-            if not _TICKER_RE.match(ticker) or ticker in {'ТИКЕР', 'TICKER'}:
+            if not _TICKER_RE.match(ticker) or ticker in {"ТИКЕР", "TICKER"}:
                 continue
             name = str(n_raw).strip()
             if not name:
@@ -202,8 +262,8 @@ def _parse_dsi(df_dsi, name_index: dict) -> dict:
     dsi_dict = {}
     if df_dsi is None or df_dsi.empty:
         return dsi_dict
-    col_name = next((c for c in df_dsi.columns if 'Акция' in str(c)), None)
-    col_dsi = next((c for c in df_dsi.columns if 'DSI' in str(c)), None)
+    col_name = next((c for c in df_dsi.columns if "Акция" in str(c)), None)
+    col_dsi = next((c for c in df_dsi.columns if "DSI" in str(c)), None)
     if not col_name or not col_dsi:
         return dsi_dict
     for _, row in df_dsi.iterrows():
@@ -221,7 +281,7 @@ def _parse_dsi(df_dsi, name_index: dict) -> dict:
 
 
 def _parse_w_any(xls: pd.ExcelFile) -> dict:
-    sheet_name = 'W-формации' if 'W-формации' in xls.sheet_names else xls.sheet_names[0]
+    sheet_name = "W-формации" if "W-формации" in xls.sheet_names else xls.sheet_names[0]
     df_w = pd.read_excel(xls, sheet_name=sheet_name, header=None)
     direction_idx = None
     for i in range(df_w.shape[1]):
@@ -234,11 +294,11 @@ def _parse_w_any(xls: pd.ExcelFile) -> dict:
     ticker_idx = -1
     if direction_idx > 0:
         left_col = df_w.iloc[:, direction_idx - 1].dropna().astype(str)
-        if left_col.str.match(r'^[A-ZА-Я0-9]{2,10}$', na=False).any():
+        if left_col.str.match(r"^[A-ZА-Я0-9]{2,10}$", na=False).any():
             ticker_idx = direction_idx - 1
     if ticker_idx == -1 and direction_idx < df_w.shape[1] - 1:
         right_col = df_w.iloc[:, direction_idx + 1].dropna().astype(str)
-        if right_col.str.match(r'^[A-ZА-Я0-9]{2,10}$', na=False).any():
+        if right_col.str.match(r"^[A-ZА-Я0-9]{2,10}$", na=False).any():
             ticker_idx = direction_idx + 1
     if ticker_idx == -1:
         return {}
@@ -249,7 +309,7 @@ def _parse_w_any(xls: pd.ExcelFile) -> dict:
         if pd.isna(t_raw) or pd.isna(d_raw):
             continue
         ticker = str(t_raw).strip().upper()
-        if not _TICKER_RE.match(ticker) or ticker in {'ТИКЕР', 'TICKER'}:
+        if not _TICKER_RE.match(ticker) or ticker in {"ТИКЕР", "TICKER"}:
             continue
         direction = str(d_raw).strip().lower()
         if direction in _W_ALIASES:
@@ -257,21 +317,21 @@ def _parse_w_any(xls: pd.ExcelFile) -> dict:
     return result
 
 
-def _parse_dividends_sheet(xls: pd.ExcelFile) -> tuple:
-    sheet_name = next((s for s in xls.sheet_names if 'дивиденд' in s.lower()), None)
+def _parse_dividends_sheet(xls: pd.ExcelFile) -> tuple[dict, list]:
+    sheet_name = next((s for s in xls.sheet_names if "дивиденд" in s.lower()), None)
     if not sheet_name:
         return {}, []
     df = pd.read_excel(xls, sheet_name=sheet_name)
     cols = {str(c).strip().lower(): c for c in df.columns}
-    t_col = next((c for k, c in cols.items() if 'тикер' in k), None)
-    n_col = next((c for k, c in cols.items() if 'название' in k or 'компания' in k or 'наименование' in k), None)
-    p_col = next((c for k, c in cols.items() if 'период' in k), None)
-    v_col = next((c for k, c in cols.items() if 'дивиденд' in k and ('руб' in k or 'сумма' in k)), None)
+    t_col = next((c for k, c in cols.items() if "тикер" in k), None)
+    n_col = next((c for k, c in cols.items() if "название" in k or "компания" in k or "наименование" in k), None)
+    p_col = next((c for k, c in cols.items() if "период" in k), None)
+    v_col = next((c for k, c in cols.items() if "дивиденд" in k and ("руб" in k or "сумма" in k)), None)
     if not v_col:
-        v_col = next((c for k, c in cols.items() if 'дивиденд' in k), None)
-    d_close_col = next((c for k, c in cols.items() if 'закрыт' in k or 'реестр' in k), None)
-    d_pay_col = next((c for k, c in cols.items() if 'выплат' in k), None)
-    d_buy_col = next((c for k, c in cols.items() if 'купить' in k), None)
+        v_col = next((c for k, c in cols.items() if "дивиденд" in k), None)
+    d_close_col = next((c for k, c in cols.items() if "закрыт" in k or "реестр" in k), None)
+    d_pay_col = next((c for k, c in cols.items() if "выплат" in k), None)
+    d_buy_col = next((c for k, c in cols.items() if "купить" in k), None)
     if not t_col or not v_col:
         return {}, []
 
@@ -280,19 +340,19 @@ def _parse_dividends_sheet(xls: pd.ExcelFile) -> tuple:
             return None
         try:
             if isinstance(val, (int, float)) and not isinstance(val, bool):
-                return pd.to_datetime(val, unit='D', origin='1899-12-30')
+                return pd.to_datetime(val, unit="D", origin="1899-12-30")
             s = str(val).strip()
-            m = re.search(r'(\d{1,2})[\.\-\/](\d{1,2})[\.\-\/](\d{4})', s)
+            m = re.search(r"(\d{1,2})[\.\-\/](\d{1,2})[\.\-\/](\d{4})", s)
             if m:
                 d, mth, y = m.groups()
                 return pd.to_datetime(f"{y}-{mth.zfill(2)}-{d.zfill(2)}")
-            m2 = re.search(r'(\d{4})[\.\-\/](\d{1,2})[\.\-\/](\d{1,2})', s)
+            m2 = re.search(r"(\d{4})[\.\-\/](\d{1,2})[\.\-\/](\d{1,2})", s)
             if m2:
                 y, mth, d = m2.groups()
                 return pd.to_datetime(f"{y}-{mth.zfill(2)}-{d.zfill(2)}")
-            dt = pd.to_datetime(s, dayfirst=True, errors='coerce')
+            dt = pd.to_datetime(s, dayfirst=True, errors="coerce")
             return dt if not pd.isna(dt) else None
-        except:
+        except Exception:
             return None
 
     summed = {}
@@ -300,7 +360,7 @@ def _parse_dividends_sheet(xls: pd.ExcelFile) -> tuple:
     now = pd.Timestamp.now().normalize()
     for _, row in df.iterrows():
         t = str(row[t_col]).strip().upper()
-        if not t or t in {'NAN', '-'} or not _TICKER_RE.match(t):
+        if not t or t in {"NAN", "-"} or not _TICKER_RE.match(t):
             continue
         dt_check = None
         for col in [d_close_col, d_pay_col, d_buy_col]:
@@ -313,9 +373,9 @@ def _parse_dividends_sheet(xls: pd.ExcelFile) -> tuple:
         if pd.isna(row[v_col]):
             continue
         try:
-            v_raw = str(row[v_col]).replace(',', '.').replace(' ', '').replace('руб', '').replace('₽', '').strip()
+            v_raw = str(row[v_col]).replace(",", ".").replace(" ", "").replace("руб", "").replace("₽", "").strip()
             val = float(v_raw)
-        except:
+        except Exception:
             continue
         summed[t] = summed.get(t, 0.0) + val
         name = str(row[n_col]).strip() if n_col and not pd.isna(row[n_col]) else "-"
@@ -327,13 +387,13 @@ def _parse_dividends_sheet(xls: pd.ExcelFile) -> tuple:
             "Название": name,
             "Период": period,
             "Дивиденд": val,
-            "Дата закрытия реестра": dt_close.strftime('%d.%m.%Y') if dt_close else "-",
-            "Выплата до...": dt_pay.strftime('%d.%m.%Y') if dt_pay else "-"
+            "Дата закрытия реестра": dt_close.strftime("%d.%m.%Y") if dt_close else "-",
+            "Выплата до...": dt_pay.strftime("%d.%m.%Y") if dt_pay else "-",
         })
     return summed, div_list
 
 
-def _parse_portfolio_any(df_raw: pd.DataFrame, df_stocks: pd.DataFrame) -> tuple:
+def _parse_portfolio_any(df_raw: pd.DataFrame, df_stocks: pd.DataFrame) -> tuple[list[dict], float]:
     """Парсинг портфеля из Excel.
     Приоритет кеша: B34 (кеш трейдера) > B35 (общий кеш по формуле) > 0.
     B36 — маржинальное обеспечение (плечо).
@@ -367,10 +427,10 @@ def _parse_portfolio_any(df_raw: pd.DataFrame, df_stocks: pd.DataFrame) -> tuple
     cash_val = cash_trader if cash_trader > 0 else total_cash
 
     cols = {str(c).strip().lower(): c for c in df_raw.columns}
-    t_candidates = [c for k, c in cols.items() if 'тикер' in k]
-    p_candidates = [c for k, c in cols.items() if 'твх' in k or 'средн' in k or 'цена входа' in k]
-    q_candidates = [c for k, c in cols.items() if 'лотов' in k or 'колич' in k or 'кол-во' in k]
-    s_candidates = [c for k, c in cols.items() if 'сектор' in k]
+    t_candidates = [c for k, c in cols.items() if "тикер" in k]
+    p_candidates = [c for k, c in cols.items() if "твх" in k or "средн" in k or "цена входа" in k]
+    q_candidates = [c for k, c in cols.items() if "лотов" in k or "колич" in k or "кол-во" in k]
+    s_candidates = [c for k, c in cols.items() if "сектор" in k]
 
     if not t_candidates or not p_candidates or not q_candidates:
         return [], cash_val
@@ -382,7 +442,7 @@ def _parse_portfolio_any(df_raw: pd.DataFrame, df_stocks: pd.DataFrame) -> tuple
 
     max_valid = -1
     for cand in q_candidates:
-        valid_count = pd.to_numeric(df_raw[cand], errors='coerce').notna().sum()
+        valid_count = pd.to_numeric(df_raw[cand], errors="coerce").notna().sum()
         if valid_count > max_valid:
             max_valid = valid_count
             q_col = cand
@@ -393,13 +453,13 @@ def _parse_portfolio_any(df_raw: pd.DataFrame, df_stocks: pd.DataFrame) -> tuple
         t = str(r[t_col]).strip().upper()
         if not _TICKER_RE.match(t):
             continue
-        if t in {'ТИКЕР', 'TICKER', 'NAN', '-'}:
+        if t in {"ТИКЕР", "TICKER", "NAN", "-"}:
             continue
         if valid_tickers and t not in valid_tickers:
             continue
         try:
-            p = float(str(r[p_col]).replace(',', '.'))
-            q = int(float(str(r[q_col]).replace(',', '.')))
+            p = float(str(r[p_col]).replace(",", "."))
+            q = int(float(str(r[q_col]).replace(",", ".")))
         except (ValueError, TypeError):
             continue
         if p <= 0 or q <= 0:
@@ -446,13 +506,13 @@ with st.sidebar:
             try:
                 xls = pd.ExcelFile(sources_file)
                 ars_dict, name_index = {}, {}
-                if 'Рейтинг арсагера' in xls.sheet_names:
-                    ars_dict, name_index = _parse_arsagera(pd.read_excel(xls, sheet_name='Рейтинг арсагера', header=None))
+                if "Рейтинг арсагера" in xls.sheet_names:
+                    ars_dict, name_index = _parse_arsagera(pd.read_excel(xls, sheet_name="Рейтинг арсагера", header=None))
                 dsi_dict = {}
-                if 'ДОХОД DSI' in xls.sheet_names:
-                    dsi_dict = _parse_dsi(pd.read_excel(xls, sheet_name='ДОХОД DSI'), name_index)
+                if "ДОХОД DSI" in xls.sheet_names:
+                    dsi_dict = _parse_dsi(pd.read_excel(xls, sheet_name="ДОХОД DSI"), name_index)
                 div_dict, div_list = {}, []
-                if any('дивиденд' in s.lower() for s in xls.sheet_names):
+                if any("дивиденд" in s.lower() for s in xls.sheet_names):
                     div_dict, div_list = _parse_dividends_sheet(xls)
                     div_dict["_list"] = div_list
                     state.set_global("future_dividends", div_dict)
@@ -483,8 +543,19 @@ with st.sidebar:
                     state.set_global("portfolio_cash_file", cash)
                     state.set_global("portfolio_cash", cash)
                     st.session_state["ui_cash_rub"] = cash
+                    
+                    # === НОВОЕ: Парсинг таблицы ребалансировки ===
+                    rebal_sectors, rebal_tickers = _parse_rebalance_table(df_raw)
+                    if rebal_sectors:
+                        state.set_global("rebal_sectors_data", rebal_sectors)
+                        state.set_global("rebal_tickers_data", rebal_tickers)
+                        st.session_state["rebal_sectors"] = pd.DataFrame(rebal_sectors)
+                        st.session_state["rebal_tickers"] = rebal_tickers
+                        st.success(f"Портфель загружен: {len(records)} позиций, кеш {cash:.0f} ₽, ребалансировка: {len(rebal_sectors)} секторов")
+                    else:
+                        st.success(f"Портфель загружен: {len(records)} позиций, кеш {cash:.0f} ₽")
+                    
                     st.session_state["_port_hash"] = _h
-                    st.success(f"Портфель загружен: {len(records)} позиций, кеш {cash:.0f} ₽")
                     state.autosave()
                 else:
                     st.error("Не найдены колонки Тикер / ТВХ / Лотов.")
@@ -531,8 +602,8 @@ with st.sidebar:
 # ============================================================
 # Вкладки
 # ============================================================
-tab_market, tab_rating, tab_indices, tab_portfolio, tab_dashboard, tab_rebalance, tab_debug, tab_calc = st.tabs([
-    "Обзор", "Рейтинг", "Индексы", "Портфель", "Дашборд", "Ребалансировка", "Отладка", "Калькулятор"
+tab_market, tab_rating, tab_indices, tab_portfolio, tab_dashboard, tab_rebalance, tab_calc = st.tabs([
+    "Обзор", "Рейтинг", "Индексы", "Портфель", "Дашборд", "Ребалансировка", "Калькулятор",
 ])
 
 with tab_market:
@@ -568,12 +639,6 @@ with tab_dashboard:
 with tab_rebalance:
     try:
         render_rebalance()
-    except Exception as e:
-        st.error(f"Ошибка: {e}")
-
-with tab_debug:
-    try:
-        render_debug()
     except Exception as e:
         st.error(f"Ошибка: {e}")
 
