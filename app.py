@@ -520,7 +520,7 @@ with st.sidebar:
                 # ИСПРАВЛЕНИЕ: сохраняем дивиденды "всего 12м" из DSI в отдельную переменную
                 if div_12m_from_dsi:
                     state.set_global("div_12m_from_dsi", div_12m_from_dsi)
-fund_data = {t: {"ars_group": ars_dict.get(t, 0), "dsi": dsi_dict.get(t, 0.0)} for t in set(ars_dict) | set(dsi_dict)}
+                fund_data = {t: {"ars_group": ars_dict.get(t, 0), "dsi": dsi_dict.get(t, 0.0)} for t in set(ars_dict) | set(dsi_dict)}
                     state.set_global("future_dividends", div_dict)
                     state.set_global("future_div_list", div_list)
                 fund_data = {t: {"ars_group": ars_dict.get(t, 0), "dsi": dsi_dict.get(t, 0.0)} for t in set(ars_dict) | set(dsi_dict)}
