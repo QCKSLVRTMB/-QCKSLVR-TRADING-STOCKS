@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import streamlit as st
 import pandas as pd
 import math
@@ -255,7 +257,7 @@ def render_rebalance():
     def style_row(row):
         styles = [""] * len(row)
         score = float(row["Балл"])
-        # Подсветка баллов
+        # Подсветка баллов: зелёный >= 700, жёлтый >= 500, красный < 500
         if score >= 700:
             styles[3] = "background-color: #4CAF50; color: white; font-weight: bold;"
         elif score >= 500:
