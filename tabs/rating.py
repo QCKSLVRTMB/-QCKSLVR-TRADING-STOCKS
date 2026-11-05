@@ -106,6 +106,7 @@ def render_rating():
         "В составе индекса": df["in_index_str"],
         "Сила актива": df["rel_strength"],
         "Дивидендная доходность": df["div_yield"],
+        "Дивиденды за 12мес.": df["div_12m"],
         "DSI": df["dsi"],
         "Тип листинга": df["LISTLEVEL"],
         "Сумма баллов": df["total_score"],
@@ -135,6 +136,8 @@ def render_rating():
         #   div_yield >= cb_rate                    → зелёный
         #   index_div_yield <= div_yield < cb_rate  → синий
         #   div_yield < index_div_yield             → красный
+        # Индекс 8 соответствует столбцу "Дивидендная доходность" — новый столбец
+        # "Дивиденды за 12мес." вставлен ПОСЛЕ него, поэтому индексы не сдвинулись.
         div_yield = float(row["Дивидендная доходность"])
         if div_yield >= cb_rate:
             styles[8] = "background-color: #4CAF50; color: white; font-weight: bold;"
@@ -151,6 +154,7 @@ def render_rating():
             "Вид актива": lambda x: "",
             "Сила актива": "{:+.2f}%",
             "Дивидендная доходность": "{:.2f}%",
+            "Дивиденды за 12мес.": "{:.4f}",
             "DSI": "{:.2f}",
             "Тип листинга": "{:.0f}",
             "Сумма баллов": "{:.0f}",
