@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 import pandas as pd
 from core.market import fetch_many_extreme_closes, fetch_many_dividends
 from core import state
@@ -13,6 +14,7 @@ IMOEX_CONSTITUENTS = {
 
 
 def _dsi_to_score(v) -> float:
+    """DSI может прийти как 0.96 (0..1) или 96.0 (0..100). Возвращает балл 0..100."""
     try:
         x = float(v)
     except (TypeError, ValueError):
