@@ -275,21 +275,44 @@ def _parse_arsagera(df_ars) -> tuple[dict, dict]:
     return ars_dict, name_index
 
 
-def _parse_dsi(df_dsi, name_index: dict) -> dict:
+def _parse_dsi(df_dsi, name_index: dict) -> tuple[dict, dict]:
+    """Парсит DSI и дивиденды 'всего 12м' из листа ДОХОД DSI.
+    Возвращает (dsi_dict, div_12m_dict)."""
     dsi_dict = {}
-    if df_dsi is None or df_dsi.empty: return dsi_dict
+    div_12m_dict = {}
+    if df_dsi is None or df_dsi.empty:
+        return dsi_dict, div_12m_dict
     col_name = next((c for c in df_dsi.columns if 'Акция' in str(c)), None)
     col_dsi = next((c for c in df_dsi.columns if 'DSI' in str(c)), None)
-    if not col_name or not col_dsi: return dsi_dict
+    col_period = next((c for c in df_dsi.columns if 'Период' in str(c)), None)
+    col_payout = next((c for c in df_dsi.columns if 'Выплата' in str(c)), None)
+    if not col_name or not col_dsi:
+        return dsi_dict, div_12m_dict
     for _, row in df_dsi.iterrows():
         name = row[col_name]
         dsi_val = row[col_dsi]
-        if pd.isna(name) or pd.isna(dsi_val): continue
+        if pd.isna(name) or pd.isna(dsi_val):
+            continue
         ticker = _lookup_ticker(name, name_index)
         if ticker and ticker not in dsi_dict:
-            try: dsi_dict[ticker] = float(dsi_val)
-            except (TypeError, ValueError): continue
-    return dsi_dict
+            try:
+                dsi_dict[ticker] = float(dsi_val)
+            except (TypeError, ValueError):
+                continue
+        # Парсим "всего 12м" — берём максимальное значение выплаты
+        if col_period and col_payout and ticker:
+            period = str(row[col_period]).strip().lower() if pd.notna(row[col_period]) else ""
+            if "12м" in period or "12 м" in period or "12мес" in period:
+                payout = row[col_payout]
+                if pd.notna(payout):
+                    try:
+                        payout_val = float(str(payout).replace(',', '.'))
+                        # Берём максимальное значение "всего 12м" для тикера
+                        if ticker not in div_12m_dict or payout_val > div_12m_dict[ticker]:
+                            div_12m_dict[ticker] = payout_val
+                    except (TypeError, ValueError):
+                        pass
+    return dsi_dict, div_12m_dict
 
 
 def _parse_w_any(xls: pd.ExcelFile) -> dict:
@@ -480,16 +503,24 @@ with st.sidebar:
                 if 'Рейтинг арсагера' in xls.sheet_names:
                     ars_dict, name_index = _parse_arsagera(pd.read_excel(xls, sheet_name='Рейтинг арсагера', header=None))
                 dsi_dict = {}
+                div_12m_from_dsi = {}  # <-- НОВОЕ: дивиденды "всего 12м" из DSI
                 index_div_yield = 0.0
                 if 'ДОХОД DSI' in xls.sheet_names:
                     df_dsi = pd.read_excel(xls, sheet_name='ДОХОД DSI')
-                    dsi_dict = _parse_dsi(df_dsi, name_index)
+                    dsi_dict, div_12m_from_dsi = _parse_dsi(df_dsi, name_index)
                     # Парсим доходность индекса "Компании стабильных дивидендов"
                     index_div_yield = _parse_index_div_yield(df_dsi)
                 div_dict, div_list = {}, []
                 if any('дивиденд' in s.lower() for s in xls.sheet_names):
                     div_dict, div_list = _parse_dividends_sheet(xls)
                     div_dict["_list"] = div_list
+                    # ИСПРАВЛЕНИЕ: future_dividends теперь только для брутто/нетто
+                    state.set_global("future_dividends", div_dict)
+                    state.set_global("future_div_list", div_list)
+                # ИСПРАВЛЕНИЕ: сохраняем дивиденды "всего 12м" из DSI в отдельную переменную
+                if div_12m_from_dsi:
+                    state.set_global("div_12m_from_dsi", div_12m_from_dsi)
+fund_data = {t: {"ars_group": ars_dict.get(t, 0), "dsi": dsi_dict.get(t, 0.0)} for t in set(ars_dict) | set(dsi_dict)}
                     state.set_global("future_dividends", div_dict)
                     state.set_global("future_div_list", div_list)
                 fund_data = {t: {"ars_group": ars_dict.get(t, 0), "dsi": dsi_dict.get(t, 0.0)} for t in set(ars_dict) | set(dsi_dict)}
