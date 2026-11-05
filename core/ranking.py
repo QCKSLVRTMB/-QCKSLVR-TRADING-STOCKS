@@ -1,5 +1,5 @@
+from __future__ import annotations
 import pandas as pd
-import re
 from core.market import fetch_many_extreme_closes, fetch_many_dividends
 from core import state
 from core.config import DEFAULT_W_FORMATIONS
@@ -13,7 +13,6 @@ IMOEX_CONSTITUENTS = {
 
 
 def _dsi_to_score(v) -> float:
-    """DSI может прийти как 0.96 (0..1) или 96.0 (0..100). Возвращает балл 0..100."""
     try:
         x = float(v)
     except (TypeError, ValueError):
@@ -23,6 +22,19 @@ def _dsi_to_score(v) -> float:
     if x <= 1.5:
         x = x * 100
     return float(min(max(x, 0.0), 100.0))
+
+
+def get_div_yield_color(div_yield: float, cb_rate: float, index_div_yield: float) -> str:
+    """Возвращает цвет для дивидендной доходности.
+    Зелёный: > ставки ЦБ
+    Синий: > доходности индекса стабильных дивидендов
+    Красный: ниже обоих порогов"""
+    if div_yield > cb_rate:
+        return "green"
+    elif div_yield > index_div_yield:
+        return "blue"
+    else:
+        return "red"
 
 
 def calc_ranking(
@@ -36,7 +48,7 @@ def calc_ranking(
 ) -> pd.DataFrame:
     df = df.copy()
 
-    # Создаём словарь ТВХ по портфелю для расчёта доходности по средней цене покупки
+    # Создаём словарь ТВХ по портфелю
     tvh_map = {}
     if portfolio_data:
         for p in portfolio_data:
@@ -48,10 +60,13 @@ def calc_ranking(
                 except (TypeError, ValueError):
                     pass
 
-    # Получаем корректировки из вкладки "Отладка"
+    # Получаем корректировки из файла Отладка
     overrides = state.g("ticker_overrides", {})
     if not isinstance(overrides, dict):
         overrides = {}
+
+    # Получаем доходность индекса "Компании стабильных дивидендов"
+    index_div_yield = float(state.g("index_div_yield", 0.0))
 
     # 1. W-формация
     w_forms = state_w_forms if state_w_forms else DEFAULT_W_FORMATIONS
@@ -59,34 +74,34 @@ def calc_ranking(
     df["w_form"] = df["SECID"].map(w_forms).fillna("-").astype(str).str.lower().str.strip()
     df["score_w"] = df["w_form"].map(w_scores).fillna(0)
 
-    # 2. Арсагера и DSI с приоритетом: Excel > overrides > default
+    # 2. Арсагера и DSI с приоритетом: Отладка > Источники > default
     fund_data = state.g("fundamental_data", {})
     if not isinstance(fund_data, dict):
         fund_data = {}
 
     def get_ars_score(ticker):
-        # Приоритет: Excel (fundamental_data) > overrides > default
-        if ticker in fund_data and fund_data[ticker].get("ars_group"):
-            group = fund_data[ticker]["ars_group"]
-        elif ticker in overrides and overrides[ticker].get("ars_group"):
+        # Приоритет: Отладка > Источники > default
+        if ticker in overrides and overrides[ticker].get("ars_group"):
             group = overrides[ticker]["ars_group"]
+        elif ticker in fund_data and fund_data[ticker].get("ars_group"):
+            group = fund_data[ticker]["ars_group"]
         else:
             group = 0
         return {1: 100, 2: 75, 3: 50, 4: 25}.get(group, 0)
 
     def get_dsi_val(ticker):
-        # Приоритет: Excel (fundamental_data) > overrides > default
-        if ticker in fund_data and fund_data[ticker].get("dsi"):
-            return fund_data[ticker]["dsi"]
-        elif ticker in overrides and overrides[ticker].get("dsi"):
+        # Приоритет: Отладка > Источники > default
+        if ticker in overrides and overrides[ticker].get("dsi"):
             return overrides[ticker]["dsi"]
+        elif ticker in fund_data and fund_data[ticker].get("dsi"):
+            return fund_data[ticker]["dsi"]
         return 0.0
 
     df["ars_group"] = df["SECID"].apply(lambda t:
-        fund_data.get(t, {}).get("ars_group", 0)
+        overrides.get(t, {}).get("ars_group", 0)
+        if t in overrides and overrides[t].get("ars_group")
+        else fund_data.get(t, {}).get("ars_group", 0)
         if t in fund_data
-        else overrides.get(t, {}).get("ars_group", 0)
-        if t in overrides
         else 0
     )
     df["score_arsagera"] = df["SECID"].apply(get_ars_score)
@@ -116,23 +131,23 @@ def calc_ranking(
     df["rel_strength"] = df.apply(get_rel_strength, axis=1)
     df["score_strength"] = (df["rel_strength"] > 0).astype(int) * 100
 
-    # 5. Дивиденды с приоритетами: Excel > overrides > dohod.ru
+    # 5. Дивиденды с приоритетом: Отладка > Источники > dohod.ru
     future_divs = state.g("future_dividends", {})
     if not isinstance(future_divs, dict):
         future_divs = {}
 
     def get_div_12m(ticker):
-        # Приоритет: Excel (future_dividends) > overrides > dohod.ru
-        if ticker in future_divs:
-            return future_divs[ticker]
-        elif ticker in overrides and overrides[ticker].get("div_12m"):
+        # Приоритет: Отладка > Источники (future_dividends) > dohod.ru
+        if ticker in overrides and overrides[ticker].get("div_12m"):
             return overrides[ticker]["div_12m"]
+        elif ticker in future_divs:
+            return future_divs[ticker]
         else:
             return divs_data.get(ticker, {}).get("div_12m", 0.0)
 
     df["div_12m"] = df["SECID"].apply(get_div_12m)
 
-    # Дивидендная доходность по рынку (для отображения в таблице рейтинга)
+    # Дивидендная доходность по рынку
     df["div_yield"] = df.apply(
         lambda r: (r["div_12m"] / r["PRICE"] * 100) if r["PRICE"] > 0 else 0.0, axis=1
     )
@@ -144,14 +159,11 @@ def calc_ranking(
         else 0.0
     )
 
-    # Балл дивидендной доходности:
-    # - Для акций портфеля считаем от доходности по ТВХ
-    # - Для остальных — от рыночной доходности
+    # Балл дивидендной доходности
     def get_score_div(row):
         ticker = row["SECID"]
         market_yield = row["div_yield"]
         tvh_yield = row["div_yield_tvh"]
-        # Если акция есть в портфеле и доходность по ТВХ > 0, используем её
         if ticker in tvh_map and tvh_yield > 0:
             effective_yield = tvh_yield
         else:
@@ -163,6 +175,16 @@ def calc_ranking(
         return 0
 
     df["score_div"] = df.apply(get_score_div, axis=1)
+
+    # Цветовая индикация дивидендной доходности
+    df["div_color"] = df.apply(
+        lambda r: get_div_yield_color(r["div_yield"], cb_rate, index_div_yield), axis=1
+    )
+    df["div_color_tvh"] = df.apply(
+        lambda r: get_div_yield_color(r["div_yield_tvh"], cb_rate, index_div_yield)
+        if r["SECID"] in tvh_map and r["div_yield_tvh"] > 0
+        else get_div_yield_color(r["div_yield"], cb_rate, index_div_yield), axis=1
+    )
 
     # 6. Выплаты
     df["score_paid_12m"] = (df["div_12m"] > 0).astype(int) * 100
