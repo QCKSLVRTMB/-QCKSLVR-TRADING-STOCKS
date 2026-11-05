@@ -1,10 +1,8 @@
-from __future__ import annotations
-
 import streamlit as st
 import pandas as pd
 import math
 from core import state
-from core.market import fetch_moex_stocks, fetch_moex_indices, fetch_extreme_close
+from core.market import fetch_moex_stocks, fetch_moex_indices, fetch_extreme_close, fetch_many_dividends
 from core.ranking import calc_ranking, get_asset_color
 from core.calc import get_instrument
 
@@ -183,10 +181,15 @@ def render_portfolio(df_stocks: pd.DataFrame):
     def style_pl(row):
         styles = [""] * len(row)
         color = row["Вид актива"]
-        if color == "green":   styles[2] = "background-color: #4CAF50; color: #4CAF50;"
-        elif color == "yellow": styles[2] = "background-color: #FFEB3B; color: #FFEB3B;"
-        elif color == "orange": styles[2] = "background-color: #FF9800; color: #FF9800;"
-        elif color == "red":    styles[2] = "background-color: #F44336; color: #F44336;"
+        # Цвет ячейки "Вид актива" по цвету вида актива
+        if color == "green":
+            styles[2] = "background-color: #4CAF50; color: #4CAF50;"
+        elif color == "yellow":
+            styles[2] = "background-color: #FFEB3B; color: #FFEB3B;"
+        elif color == "orange":
+            styles[2] = "background-color: #FF9800; color: #FF9800;"
+        elif color == "red":
+            styles[2] = "background-color: #F44336; color: #F44336;"
 
         # Подсветка баллов: зелёный если >= 700, жёлтый если >= 500, красный если < 500
         score = float(row["Баллы"])
