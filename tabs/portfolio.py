@@ -9,6 +9,13 @@ from core.ranking import calc_ranking, get_asset_color
 from core.calc import get_instrument
 
 
+def _normalize_index_div_yield(raw: float) -> float:
+    raw = float(raw)
+    if 0 < raw < 1.5:
+        return raw * 100
+    return raw
+
+
 def render_portfolio(df_stocks: pd.DataFrame):
     st.subheader("Портфель")
     port_data = state.g("portfolio_data", [])
@@ -20,9 +27,9 @@ def render_portfolio(df_stocks: pd.DataFrame):
     df_stocks_filtered = df_stocks[df_stocks["PRICE"] > 0].copy()
     extreme_date = state.g("extreme_date")
     cb_rate = float(state.g("cb_rate", 14.0))
-    index_div_yield = float(state.g("index_div_yield", 0.0))
+    # Приводим к процентам (11.98), чтобы сравнивать с div_yield в %
+    index_div_yield = _normalize_index_div_yield(state.g("index_div_yield", 0.0))
 
-    # Рассчитываем рейтинг с учётом portfolio_data (score_div по ТВХ)
     with st.spinner("Расчёт рейтинга акций портфеля..."):
         df_indices = fetch_moex_indices()
         imoex_ext, _ = fetch_extreme_close("IMOEX", extreme_date, market="index")
@@ -103,7 +110,8 @@ def render_portfolio(df_stocks: pd.DataFrame):
     if not planned_amounts:
         st.warning("Таблица «Ребалансировка» пуста. Рекомендации будут равны 0.")
 
-    st.caption(f"Ставка ЦБ: **{cb_rate:.2f}%** | Доходность индекса стаб.див: **{index_div_yield*100:.2f}%**")
+    # index_div_yield уже в процентах
+    st.caption(f"Ставка ЦБ: **{cb_rate:.2f}%** | Доходность индекса стаб.див: **{index_div_yield:.2f}%**")
 
     rows = []
     total_value = 0.0
@@ -121,11 +129,9 @@ def render_portfolio(df_stocks: pd.DataFrame):
         pl_rub = value - cost
         pl_pct = (current_price / avg_price - 1) * 100 if avg_price > 0 else 0.0
 
-        # Дивиденды с приоритетом: Отладка > DSI "всего 12м" > dohod.ru
         if t in overrides and overrides[t].get("div_12m"):
             div_12m = overrides[t]["div_12m"]
         else:
-            # ИСПРАВЛЕНИЕ: берем из div_12m_from_dsi (лист ДОХОД DSI)
             div_12m_dsi = state.g("div_12m_from_dsi", {})
             if isinstance(div_12m_dsi, dict) and t in div_12m_dsi:
                 div_12m = div_12m_dsi[t]
@@ -138,16 +144,15 @@ def render_portfolio(df_stocks: pd.DataFrame):
         gross_div = fut_div_per_share * shares
         net_div = gross_div * (1 - 0.13)
 
-        if div_yield_tvh > cb_rate and pl_pct > 0:
+        if div_yield_tvh >= cb_rate and pl_pct > 0:
             asset_color = "green"
-        elif div_yield_tvh > cb_rate and pl_pct <= 0:
+        elif div_yield_tvh >= cb_rate and pl_pct <= 0:
             asset_color = "yellow"
         elif div_yield_tvh == 0 and pl_pct > 0:
             asset_color = "orange"
         else:
             asset_color = "red"
 
-        # Балл из рассчитанного рейтинга (с учётом ТВХ)
         ticker_score = score_map.get(t, 0)
 
         target_amount = planned_amounts.get(t, 0.0)
@@ -206,7 +211,6 @@ def render_portfolio(df_stocks: pd.DataFrame):
         elif color == "red":
             styles[2] = "background-color: #F44336; color: #F44336;"
 
-        # Подсветка баллов
         score = float(row["Баллы"])
         if score >= 700:
             styles[3] = "background-color: #4CAF50; color: white; font-weight: bold;"
@@ -222,11 +226,12 @@ def render_portfolio(df_stocks: pd.DataFrame):
             styles[7] = "color: #F44336; font-weight: bold;"
             styles[8] = "color: #F44336; font-weight: bold;"
 
-        # Цветовая индикация дивидендной доходности
+        # Цвет дивидендной доходности:
+        # Зелёный: >= cb_rate; Синий: >= index_div_yield (и < cb_rate); иначе красный
         div_yield = row["Див. доходность"]
-        if div_yield > cb_rate:
+        if div_yield >= cb_rate:
             styles[10] = "background-color: #4CAF50; color: white; font-weight: bold;"
-        elif div_yield > index_div_yield:
+        elif index_div_yield > 0 and div_yield >= index_div_yield:
             styles[10] = "background-color: #2196F3; color: white; font-weight: bold;"
         else:
             styles[10] = "background-color: #F44336; color: white; font-weight: bold;"
