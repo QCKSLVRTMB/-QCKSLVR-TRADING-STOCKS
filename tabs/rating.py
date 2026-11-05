@@ -17,8 +17,10 @@ def render_rating():
     df_stocks = df_stocks[df_stocks["PRICE"] > 0].copy()
     extreme_date = state.g("extreme_date")
     cb_rate = float(state.g("cb_rate", 14.0))
-    # ИСПРАВЛЕНИЕ: получаем index_div_yield из state
-    index_div_yield = float(state.g("index_div_yield", 0.0))
+    # Источник хранит долю (0.1198) — приводим к процентам (11.98),
+    # чтобы сравнивать с div_yield, который тоже в процентах.
+    _raw_idx = float(state.g("index_div_yield", 0.0) or 0.0)
+    index_div_yield = _raw_idx * 100 if 0 < _raw_idx < 1.5 else _raw_idx
 
     with st.spinner(f"Расчёт рейтинга для {len(df_stocks)} бумаг..."):
         imoex_ext, _ = fetch_extreme_close("IMOEX", extreme_date, market="index")
@@ -82,8 +84,8 @@ def render_rating():
     df = df.sort_values(col, ascending=asc).reset_index(drop=True)
 
     st.caption(f"Показано **{len(df)}** из **{len(df_all)}** бумаг")
-    # ИСПРАВЛЕНИЕ: отображаем index_div_yield
-    st.caption(f"Ставка ЦБ: **{cb_rate:.2f}%** | Доходность индекса стаб.див: **{index_div_yield*100:.2f}%**")
+    # index_div_yield уже в процентах
+    st.caption(f"Ставка ЦБ: **{cb_rate:.2f}%** | Доходность индекса стаб.див: **{index_div_yield:.2f}%**")
 
     if df.empty:
         st.info("Нет бумаг, удовлетворяющих фильтрам.")
@@ -129,11 +131,14 @@ def render_rating():
         elif color == "yellow": styles[3] = "background-color: #FFEB3B; color: #FFEB3B;"
         elif color == "orange": styles[3] = "background-color: #FF9800; color: #FF9800;"
         elif color == "red": styles[3] = "background-color: #F44336; color: #F44336;"
-        # Цветовая индикация дивидендной доходности
-        div_yield = row["Дивидендная доходность"]
-        if div_yield > cb_rate:
+        # Цвет дивидендной доходности (все три порога — в процентах):
+        #   div_yield >= cb_rate                    → зелёный
+        #   index_div_yield <= div_yield < cb_rate  → синий
+        #   div_yield < index_div_yield             → красный
+        div_yield = float(row["Дивидендная доходность"])
+        if div_yield >= cb_rate:
             styles[8] = "background-color: #4CAF50; color: white; font-weight: bold;"
-        elif div_yield > index_div_yield:
+        elif index_div_yield > 0 and div_yield >= index_div_yield:
             styles[8] = "background-color: #2196F3; color: white; font-weight: bold;"
         else:
             styles[8] = "background-color: #F44336; color: white; font-weight: bold;"
