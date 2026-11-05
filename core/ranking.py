@@ -139,13 +139,17 @@ def calc_ranking(
         future_divs = {}
 
     def get_div_12m(ticker):
-        # Приоритет: Отладка > Источники (future_dividends) > dohod.ru
-        if ticker in overrides and overrides[ticker].get("div_12m"):
-            return overrides[ticker]["div_12m"]
-        elif ticker in future_divs:
-            return future_divs[ticker]
-        else:
-            return divs_data.get(ticker, {}).get("div_12m", 0.0)
+    # Приоритет: Отладка > DSI "всего 12м" > Источники (future_dividends) > dohod.ru
+    if ticker in overrides and overrides[ticker].get("div_12m"):
+        return overrides[ticker]["div_12m"]
+    # ИСПРАВЛЕНИЕ: берем из div_12m_from_dsi (лист ДОХОД DSI, строка "всего 12м")
+    div_12m_dsi = state.g("div_12m_from_dsi", {})
+    if isinstance(div_12m_dsi, dict) and ticker in div_12m_dsi:
+        return div_12m_dsi[ticker]
+    elif ticker in future_divs:
+        return future_divs[ticker]
+    else:
+        return divs_data.get(ticker, {}).get("div_12m", 0.0)
 
     df["div_12m"] = df["SECID"].apply(get_div_12m)
 
