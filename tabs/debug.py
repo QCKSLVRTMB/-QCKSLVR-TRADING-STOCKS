@@ -1,3 +1,4 @@
+from __future__ import annotations
 import streamlit as st
 import pandas as pd
 from core import state
@@ -7,8 +8,10 @@ from core.market import fetch_moex_stocks
 def render_debug():
     """Вкладка для ручной корректировки параметров акций в рейтинге.
     
-    Важно: корректировка применяется ТОЛЬКО к выбранному параметру.
-    Остальные параметры берутся из источников без изменений.
+    Важные особенности:
+    - Корректировка применяется ТОЛЬКО к выбранному параметру
+    - Остальные параметры берутся из источников без изменений
+    - Показывает нераспознанные названия из DSI для ручной привязки
     """
     st.subheader("Отладка и корректировка параметров")
     st.markdown("""
@@ -32,6 +35,35 @@ def render_debug():
 
     overrides = state.g("ticker_overrides", {})
 
+    # ============================================================
+    # СЕКЦИЯ: Нераспознанные названия из DSI
+    # ============================================================
+    unmapped_names = state.g("unmapped_dsi_names", [])
+    if unmapped_names:
+        st.markdown("### ⚠️ Нераспознанные названия из DSI")
+        st.caption(f"Найдено **{len(unmapped_names)}** названий из листа «ДОХОД DSI», "
+                   f"которые не удалось автоматически привязать к тикерам. "
+                   f"DSI для этих акций будет равен 0, пока вы не добавите корректировку.")
+        
+        # Показываем уникальные названия
+        unique_names = sorted(set(unmapped_names))
+        
+        # Группируем по 3 в ряд для компактности
+        cols = st.columns(3)
+        for idx, name in enumerate(unique_names[:30]):  # Показываем первые 30
+            with cols[idx % 3]:
+                st.caption(f"• {name}")
+        
+        if len(unique_names) > 30:
+            st.caption(f"... и ещё {len(unique_names) - 30} названий")
+        
+        st.info("💡 **Как исправить:** Выберите тикер ниже, укажите DSI из источника и нажмите «Сохранить». "
+                "Либо добавьте маппинг в код `app.py` в словарь `DSI_NAME_TO_TICKER`.")
+        st.divider()
+
+    # ============================================================
+    # СЕКЦИЯ: Активные корректировки
+    # ============================================================
     st.markdown("### Корректировки параметров акций")
 
     override_tickers = list(overrides.keys())
@@ -39,7 +71,6 @@ def render_debug():
     if not override_tickers:
         st.info("Нет активных корректировок. Добавьте новую корректировку ниже.")
 
-    # Отображаем существующие корректировки
     if override_tickers:
         st.markdown("#### Активные корректировки")
 
@@ -66,7 +97,9 @@ def render_debug():
                         st.rerun()
                 st.divider()
 
-    # Форма добавления новой корректировки
+    # ============================================================
+    # СЕКЦИЯ: Добавить корректировку
+    # ============================================================
     st.markdown("#### Добавить корректировку")
     st.caption("Заполните только те поля, которые нужно изменить. Пустые поля не будут применены.")
 
@@ -82,11 +115,10 @@ def render_debug():
         )
 
     with col2:
-        # Показываем текущее значение из источников
         fund_data = state.g("fundamental_data", {})
         current_dsi = fund_data.get(selected_ticker, {}).get("dsi", 0.0) if selected_ticker else 0.0
         dsi = st.number_input(
-            "DSI (оставьте 0, чтобы не менять)",
+            "DSI (0 = не менять)",
             value=0.0,
             step=0.01,
             min_value=0.0,
@@ -119,12 +151,11 @@ def render_debug():
         )
 
     with col5:
-        st.write("")  # отступ
-        st.write("")  # отступ
-        add_clicked = st.button("💾 Сохранить", key="debug_add_override", use_container_width=True)
+        st.write("")
+        st.write("")
+        add_clicked = st.button("Сохранить", key="debug_add_override", use_container_width=True)
 
     if add_clicked and selected_ticker:
-        # Создаем запись только с заполненными полями
         override_entry = {}
         if dsi > 0:
             override_entry["dsi"] = dsi
@@ -137,14 +168,16 @@ def render_debug():
             overrides[selected_ticker] = override_entry
             state.set_global("ticker_overrides", overrides)
             state.autosave(force=True)
-            st.success(f"Корректировка для {selected_ticker} сохранена! Изменятся только заполненные поля.")
+            st.success(f"Корректировка для {selected_ticker} сохранена!")
             st.rerun()
         else:
             st.warning("Заполните хотя бы одно поле для корректировки.")
 
     st.divider()
 
-    # Справка о приоритетах
+    # ============================================================
+    # СЕКЦИЯ: Справка
+    # ============================================================
     st.markdown("### Справка о приоритетах данных")
 
     st.markdown("""
@@ -168,7 +201,6 @@ def render_debug():
     2. Файл "Портфель" (Excel)
     """)
 
-    # Кнопка очистки всех корректировок
     if overrides:
         st.divider()
         if st.button("🗑 Очистить все корректировки", key="debug_clear_all", use_container_width=True):
