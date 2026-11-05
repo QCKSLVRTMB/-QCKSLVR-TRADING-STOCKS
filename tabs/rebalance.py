@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 import streamlit as st
 import pandas as pd
 from core import state
@@ -9,7 +10,7 @@ from core.calc import get_instrument
 DEFAULT_SECTORS = [
     "Нефтегаз", "Финансовый", "Металлы и добыча", "Энергетика",
     "Телекомы", "Потребительский", "Химия", "Инновации",
-    "Транспорт", "ИТ", "Строительство", "Разное"
+    "Транспорт", "ИТ", "Строительство", "Разное",
 ]
 
 
@@ -26,27 +27,34 @@ def render_rebalance():
     df_stocks = df_stocks[df_stocks["PRICE"] > 0].copy()
     extreme_date = state.g("extreme_date")
 
+    # Получаем данные портфеля для передачи в calc_ranking
+    positions = state.g("portfolio_data", [])
+
     with st.spinner("Расчет баллов акций..."):
         imoex_ext, _ = fetch_extreme_close("IMOEX", extreme_date, market="index")
-        imoex_row = df_indices[df_indices['SECID'] == 'IMOEX']
-        imoex_curr = imoex_row['CURRENTVALUE'].values[0] if not imoex_row.empty else 0.0
+        imoex_row = df_indices[df_indices["SECID"] == "IMOEX"]
+        imoex_curr = float(imoex_row["CURRENTVALUE"].values[0]) if not imoex_row.empty else 0.0
         w_forms = state.g("w_formations")
-        cb_rate = state.g("cb_rate")
-        df_ranked = calc_ranking(df_stocks, w_forms, cb_rate, extreme_date, imoex_ext, imoex_curr)
+        cb_rate = float(state.g("cb_rate", 14.0))
+        # ВАЖНО: передаём portfolio_data, чтобы score_div считался по ТВХ для акций портфеля
+        df_ranked = calc_ranking(
+            df_stocks, w_forms, cb_rate, extreme_date, imoex_ext, imoex_curr,
+            portfolio_data=positions,
+        )
         score_map = dict(zip(df_ranked["SECID"], df_ranked["total_score"]))
         name_map = dict(zip(df_ranked["SECID"], df_ranked["SHORTNAME"]))
 
-    positions = state.g("portfolio_data", [])
-    cash = state.g("portfolio_cash", 0.0)
-    cash_pct = state.g("portfolio_cash_pct", 0.0)
+    cash = float(state.g("portfolio_cash", 0.0))
+    cash_pct = float(state.g("portfolio_cash_pct", 0.0))
     target_cash_pct = float(state.g("cash_reserve", 20.0))
 
     current_stocks_value = 0.0
     for p in positions:
         inst = get_instrument(p["Тикер"], df_stocks)
-        price = inst.price if inst.price > 0 else p["ТВХ"]
-        lot_size = inst.lot_size if inst.lot_size > 0 else 1
-        current_stocks_value += price * p["Лотов"] * lot_size
+        price = float(inst.price) if float(inst.price) > 0 else float(p["ТВХ"])
+        lot_size = float(inst.lot_size) if float(inst.lot_size) > 0 else 1.0
+        lots = float(p["Лотов"])
+        current_stocks_value += price * lots * lot_size
 
     total_portfolio_value = current_stocks_value + cash
 
@@ -57,21 +65,21 @@ def render_rebalance():
         [
             "Без продажи (Перераспределить весь портфель + кеш)",
             "С продажей (Жесткое приведение к целевой структуре)",
-            "Тактическая докупка (Распределить ТОЛЬКО текущий свободный кеш)"
+            "Тактическая докупка (Распределить ТОЛЬКО текущий свободный кеш)",
         ],
         horizontal=False,
         help=(
             "1. Весь портфель пересчитывается, кеш докупает акции до целевых долей.\n"
             "2. Система может предложить продажу, чтобы достичь целевого % кеша.\n"
-            "3. Идеально для усреднения: распределяется только доступный кеш."
-        )
+            "3. Идеально для усреднения: распределяется только доступный кеш, не трогая текущие позиции."
+        ),
     )
 
     if "Без продажи" in scenario:
         base_budget = current_stocks_value + cash
         scenario_desc = "Весь портфель перераспределяется за счет докупки"
     elif "С продажей" in scenario:
-        base_budget = total_portfolio_value * (1 - target_cash_pct / 100)
+        base_budget = total_portfolio_value * (1 - target_cash_pct / 100.0)
         scenario_desc = f"Приведение к структуре с {target_cash_pct:.1f}% кеша"
     else:
         base_budget = cash
@@ -153,13 +161,12 @@ def render_rebalance():
         if f"tags_{sector}" not in st.session_state:
             st.session_state[f"tags_{sector}"] = default_tickers
 
-        # ИСПРАВЛЕНИЕ: передаем default в multiselect
         selected = st.multiselect(
             f"Активы в секторе «{sector}»",
             options=all_tickers,
-            default=default_tickers,  # <-- ДОБАВЛЕНО
+            default=default_tickers,
             key=f"tags_{sector}",
-            label_visibility="collapsed"
+            label_visibility="collapsed",
         )
 
         st.session_state["rebal_tickers"][sector] = selected
