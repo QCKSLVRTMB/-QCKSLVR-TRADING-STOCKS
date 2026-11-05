@@ -121,13 +121,16 @@ def render_portfolio(df_stocks: pd.DataFrame):
         pl_rub = value - cost
         pl_pct = (current_price / avg_price - 1) * 100 if avg_price > 0 else 0.0
 
-        # Дивиденды с приоритетом: Отладка > Источники > dohod.ru
+        # Дивиденды с приоритетом: Отладка > DSI "всего 12м" > dohod.ru
         if t in overrides and overrides[t].get("div_12m"):
             div_12m = overrides[t]["div_12m"]
-        elif t in future_divs:
-            div_12m = future_divs[t]
         else:
-            div_12m = divs_data.get(t, {}).get("div_12m", 0.0)
+            # ИСПРАВЛЕНИЕ: берем из div_12m_from_dsi (лист ДОХОД DSI)
+            div_12m_dsi = state.g("div_12m_from_dsi", {})
+            if isinstance(div_12m_dsi, dict) and t in div_12m_dsi:
+                div_12m = div_12m_dsi[t]
+            else:
+                div_12m = divs_data.get(t, {}).get("div_12m", 0.0)
 
         div_yield_tvh = (div_12m / avg_price * 100) if avg_price > 0 else 0.0
 
