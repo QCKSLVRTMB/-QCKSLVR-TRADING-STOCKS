@@ -344,43 +344,80 @@ def _parse_arsagera(df_ars) -> tuple[dict, dict]:
     return ars_dict, name_index
 
 
+def _to_float_safe(v):
+    """Нормализует число: запятая, пробелы, валюта, проценты, NBSP."""
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return None
+    if isinstance(v, (int, float)):
+        return float(v)
+    s = str(v).strip()
+    if not s:
+        return None
+    s = re.sub(r"[₽$€£%\u00a0\u202f\s]", "", s)
+    if "," in s and "." in s:
+        s = s.replace(",", "")          # 1,085.00 → 1085.00
+    else:
+        s = s.replace(",", ".")         # 1085,00  → 1085.00
+    try:
+        return float(s)
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_12m_period(p) -> bool:
+    """'всего 12м' / '12м' / '12 м' / '12мес' / '12 месяцев'. Латиница/кириллица/пробелы."""
+    if p is None or (isinstance(p, float) and pd.isna(p)):
+        return False
+    s = str(p).strip().lower()
+    s = s.replace("m", "м")             # латинская m → кириллическая м
+    s = s.replace("\u00a0", " ")         # NBSP → обычный пробел
+    return ("12м" in s) or ("12 м" in s)
+
+
 def _parse_dsi(df_dsi, name_index: dict) -> tuple[dict, dict]:
-    """Парсит DSI и дивиденды 'всего 12м' из листа ДОХОД DSI.
+    """DSI + 'всего 12м'. 12м парсится НЕЗАВИСИМО от DSI.
     Возвращает (dsi_dict, div_12m_dict)."""
-    dsi_dict = {}
-    div_12m_dict = {}
+    dsi_dict: dict = {}
+    div_12m_dict: dict = {}
     if df_dsi is None or df_dsi.empty:
         return dsi_dict, div_12m_dict
-    col_name = next((c for c in df_dsi.columns if "Акция" in str(c)), None)
-    col_dsi = next((c for c in df_dsi.columns if "DSI" in str(c)), None)
-    col_period = next((c for c in df_dsi.columns if "Период" in str(c)), None)
-    col_payout = next((c for c in df_dsi.columns if "Выплата" in str(c)), None)
-    if not col_name or not col_dsi:
+
+    def _find_col(*substrs):
+        for c in df_dsi.columns:
+            cn = str(c).strip().lower()
+            if any(s.lower() in cn for s in substrs):
+                return c
+        return None
+
+    col_name   = _find_col("акци")           # "Акция", "Акции"
+    col_dsi    = _find_col("dsi")
+    col_period = _find_col("период")
+    col_payout = _find_col("выплат")
+
+    if col_name is None:
         return dsi_dict, div_12m_dict
+
     for _, row in df_dsi.iterrows():
         name = row[col_name]
-        dsi_val = row[col_dsi]
-        if pd.isna(name) or pd.isna(dsi_val):
+        if pd.isna(name):
             continue
-        ticker = _lookup_ticker(name, name_index)
-        if ticker and ticker not in dsi_dict:
-            try:
-                dsi_dict[ticker] = float(dsi_val)
-            except (TypeError, ValueError):
-                continue
-        # Парсим "всего 12м" — берём максимальное значение выплаты
-        if col_period and col_payout and ticker:
-            period = str(row[col_period]).strip().lower() if pd.notna(row[col_period]) else ""
-            if "12м" in period or "12 м" in period or "12мес" in period:
-                payout = row[col_payout]
-                if pd.notna(payout):
-                    try:
-                        payout_val = float(str(payout).replace(",", "."))
-                        # Берём максимальное значение "всего 12м" для тикера
-                        if ticker not in div_12m_dict or payout_val > div_12m_dict[ticker]:
-                            div_12m_dict[ticker] = payout_val
-                    except (TypeError, ValueError):
-                        pass
+        ticker = _lookup_ticker(str(name).strip(), name_index)
+        if not ticker:
+            continue
+
+        # DSI — независимо
+        if col_dsi is not None:
+            dv = _to_float_safe(row[col_dsi])
+            if dv is not None and ticker not in dsi_dict:
+                dsi_dict[ticker] = dv
+
+        # 12м — независимо от DSI
+        if col_period is not None and col_payout is not None:
+            if _is_12m_period(row[col_period]):
+                pv = _to_float_safe(row[col_payout])
+                if pv is not None and pv > div_12m_dict.get(ticker, -1):
+                    div_12m_dict[ticker] = pv
+
     return dsi_dict, div_12m_dict
 
 
@@ -645,6 +682,11 @@ with st.sidebar:
                     msg += f" Будущих дивидендов: {len(div_list)}."
                 if div_12m_from_dsi:
                     msg += f" Дивидендов '12м' из DSI: {len(div_12m_from_dsi)}."
+                    lkoh_12m = div_12m_from_dsi.get("LKOH")
+                    if lkoh_12m:
+                        msg += f" LKOH 12м = {lkoh_12m:g}."
+                    else:
+                        msg += " ⚠ LKOH не найден в 12м."
                 if index_div_yield > 0:
                     msg += f" Доходность индекса стаб.див: {index_div_yield*100:.2f}%."
                 st.success(msg)
