@@ -133,346 +133,77 @@ def _parse_rebalance_table(df_raw: pd.DataFrame) -> tuple[list[dict], dict]:
     return sectors_data, tickers_data
 
 
-# ============================================================
-# СЛОВАРЬ МАППИНГОВ НАЗВАНИЙ DSI → ТИКЕРЫ
-# ============================================================
-# Явные привязки для названий из листа "ДОХОД DSI", которые не маппятся
-# автоматически через Арсагер (особенно пары обычных/привилегированных акций).
-DSI_NAME_TO_TICKER = {
-    # Сбербанк
-    "сбербанк-п": "SBERP",
-    "сбербанк-ао": "SBER",
-    "сбербанк": "SBER",
-    # Сургутнефтегаз
-    "сургутнефтегаз-п": "SNGSP",
-    "сургутнефтегаз-ао": "SNGS",
-    "сургутнефтегаз": "SNGS",
-    # Татнефть
-    "татнефть-п": "TATNP",
-    "татнефть-ао": "TATN",
-    "татнефть": "TATN",
-    # Транснефть
-    "транснефть-п": "TRNFP",
-    "транснефть": "TRNFP",
-    # Ростелеком
-    "ростелеком-п": "RTKMP",
-    "ростелеком-ао": "RTKM",
-    "ростелеком": "RTKM",
-    # Башнефть
-    "башнефть-п": "BANEP",
-    "башнефть-ао": "BANE",
-    "башнефть": "BANE",
-    # Нижнекамскнефтехим
-    "нижнекамскнефтехим-п": "NKNCP",
-    "нижнекамскнефтехим-ао": "NKNC",
-    "нкнх-п": "NKNCP",
-    "нкнх-ао": "NKNC",
-    "нкнх": "NKNC",
-    # Казаньоргсинтез
-    "казаньоргсинтез-п": "KAZTP",
-    "казаньоргсинтез-ао": "KAZT",
-    "куйбышевазот-п": "KAZTP",
-    "куйбышевазот": "KAZT",
-    "куйбазот-п": "KAZTP",
-    "куйбазот": "KAZT",
-    # Мечел
-    "мечел-п": "MTLRP",
-    "мечел-ао": "MTLR",
-    "мечел": "MTLR",
-    # Саратовский НПЗ
-    "саратовский нпз-п": "KRKNP",
-    "саратовский нпз-ао": "KRKN",
-    "саратовский нпз": "KRKN",
-    # Россети Ленэнерго
-    "россети ленэнерго-п": "LSNGP",
-    "россети ленэнерго-ао": "LSNG",
-    "россети ленэнерго": "LSNG",
-    # Россети Московский регион
-    "россети московский регион": "MSRS",
-    "моэск": "MSRS",
-    # Россети Центр
-    "россети центр": "MRKC",
-    "мрск центра": "MRKC",
-    # Россети Центр и Приволжье
-    "россети центр и приволжье": "MRKP",
-    "мрск цп": "MRKP",
-    # Россети Юг
-    "россети юг": "MRKY",
-    "мрск юга": "MRKY",
-    # Россети Урал
-    "россети урал": "MRKU",
-    "мрск урала": "MRKU",
-    # Россети Волга
-    "россети волга": "MRKV",
-    "мрск волги": "MRKV",
-    # Россети Северо-Запад
-    "россети северо-запад": "MRKZ",
-    "мрск сз": "MRKZ",
-    # Россети Сибирь
-    "россети сибирь": "MRKS",
-    "мрск сибири": "MRKS",
-    # Фосагро
-    "фосагро": "PHOR",
-    "фосагро ао": "PHOR",
-    # Норильский никель
-    "гмк норильский никель": "GMKN",
-    "норильский никель": "GMKN",
-    # Новатэк
-    "новатэк": "NVTK",
-    # Газпром нефть
-    "газпром нефть": "SIBN",
-    # Роснефть
-    "роснефть": "ROSN",
-    # Газпром
-    "газпром": "GAZP",
-    # Лукойл
-    "лукойл": "LKOH",
-    # Яндекс
-    "яндекс": "YDEX",
-    # МТС
-    "мтс": "MTSS",
-    # Московская биржа
-    "московская биржа": "MOEX",
-    # Интер РАО
-    "интер рао еэс": "IRAO",
-    "интер рао": "IRAO",
-    # Банк Санкт-Петербург
-    "банк санкт-петербург": "BSPB",
-    "банк санкт-петербург (бсп)": "BSPB",
-    "бсп": "BSPB",
-    "банк санкт-петербург-ап": "BSPBP",
-    # Совкомбанк
-    "совкомбанк": "SVCB",
-    # ВТБ
-    "втб": "VTBR",
-    "банк втб": "VTBR",
-    # Т-Технологии
-    "т-технологии": "T",
-    # Дом.РФ
-    "дом.рф": "DOMRF",
-    # Русал
-    "ок русал": "RUAL",
-    "русал": "RUAL",
-    # Полюс
-    "полюс": "PLZL",
-    # Северсталь
-    "северсталь": "CHMF",
-    # НЛМК
-    "нлмк": "NLMK",
-    # ММК
-    "ммк": "MAGN",
-    # Алроса
-    "алроса": "ALRS",
-    # Хэдхантер
-    "хэдхантер": "HEAD",
-    # Озон
-    "озон": "OZON",
-    # Ozon Фармацевтика
-    "озон фармацевтика": "OZPH",
-    # Аэрофлот
-    "аэрофлот": "AFLT",
-    # Совкомфлот
-    "совкомфлот": "FLOT",
-    # Новороссийский морской торговый порт
-    "новороссийский морской торговый порт": "NMTP",
-    "нмтп": "NMTP",
-    # Таттелеком
-    "таттелеком": "TTLK",
-    # МГТС
-    "мгтс": "MGTS",
-    "мгтс-п": "MGTS",
-    # Центральный телеграф
-    "центральный телеграф-п": "CNTLP",
-    "центральный телеграф-ао": "CNTL",
-    # Акрон
-    "акрон": "AKRN",
-    # ФосАгро (вариант)
-    "фосагро": "PHOR",
-    # Займер
-    "займер": "ZAYM",
-    "займер ао": "ZAYM",
-    # ЕвроТранс
-    "евротранс": "EUTR",
-    "евротранс-ао": "EUTR",
-    # ВУШ Холдинг
-    "вуш холдинг": "WUSH",
-    # Абрау-Дюрсо
-    "абрау-дюрсо": "ABRD",
-    # НоваБев Групп (Белуга)
-    "новабев групп": "BELU",
-    "белуга групп": "BELU",
-    "белуга": "BELU",
-    # Черкизово
-    "черкизово": "GCHE",
-    "группа черкизово": "GCHE",
-    # Инарктика (РусАква)
-    "инарктика": "AQUA",
-    "русаква": "AQUA",
-    # Самараэнерго
-    "самараэнерго": "SAGO",
-    "самарэн-ао": "SAGO",
-    "самарэн-ап": "SAGOP",
-    # Красноярскэнергосбыт
-    "красноярскэнергосбыт-ао": "KRSB",
-    "красноярскэнергосбыт-ап": "KRSBP",
-    # ТНС энерго
-    "тнс энерго": "TNSE",
-    "тнс энерго ярославль": "YRSB",
-    "тнс энерго ярославль, ап": "YRSBP",
-    "тнс энерго нижний новгород": "NNSB",
-    "тнс энерго нижний новгород, ап": "NNSBP",
-    "тнс энерго ростов-на-дону": "RTSB",
-    "тнс энерго ростов-на-дону, ап": "RTSBP",
-    "тнс энерго кубань": "KBSB",
-    # Пермэнергосбыт
-    "пермэнергосбыт": "PMSB",
-    "пермэнергосбыт, ап": "PMSBP",
-    # Мордовэнергосбыт
-    "мордэнсб": "MRSB",
-    # ЛЭСК
-    "лэск ао": "LPSB",
-    # ВИ.ру
-    "ви.ру": "VSEH",
-    # Хендерсон
-    "хендерсон": "HNFG",
-    # iЦиан
-    "iциан": "CNRU",
-    "циан": "CNRU",
-    # Группа Позитив
-    "группа позитив": "POSI",
-    "позитив": "POSI",
-    # Диасофт
-    "диасофт": "DIAS",
-    # Arenadata
-    "arenadata": "DATA",
-    "аренадата": "DATA",
-    # Группа Астра
-    "группа астра": "ASTR",
-    "астра": "ASTR",
-    # Софтлайн
-    "софтлайн": "SOFL",
-    # Мать и дитя
-    "мать и дитя": "MDMG",
-    "мд медиакал груп": "MDMG",
-    # Ренессанс Страхование
-    "ренессанс страхование": "RENI",
-    "группа ренессанс страхование": "RENI",
-    # Фикс Прайс
-    "фикс прайс": "FIXR",
-    "fix price": "FIXR",
-    # Сегежа
-    "сегежа": "SGZH",
-    "сегежа групп": "SGZH",
-    # Селигдар
-    "селигдар": "SELG",
-    "селигдар ао": "SELG",
-    # ЭсЭфАй
-    "эсэфай": "SFIN",
-    "сафмар": "SFIN",
-    # Европлан
-    "европлан": "LEAS",
-    "лк европлан": "LEAS",
-    # Соллерс
-    "соллерс": "SVAV",
-    # ВсеИнструменты
-    "всеинструменты": "VSEH",
-    # Левенгук
-    "левенгук": "LVHK",
-    # ОГК-2
-    "огк-2": "OGKB",
-    # Русгидро
-    "русгидро": "HYDR",
-    # Мосэнерго
-    "мосэнерго": "MSNG",
-    # ТГК-1
-    "тгк-1": "TGKA",
-    # ТГК-2
-    "тгк-2": "TGKB",
-    # Юнипро
-    "юнипро": "UPRO",
-    # ЭЛ5-Энерго
-    "эл5-энерго": "ELFV",
-    "энел россия": "ELFV",
-    # ФСК Россети
-    "фск россети": "FEES",
-    "фск – россети": "FEES",
-    # Магнит
-    "магнит": "MGNT",
-    # Лента
-    "лента": "LENT",
-    # X5
-    "икс 5": "X5",
-    "кц икс 5": "X5",
-    "корпоративный центр икс 5": "X5",
-    # ПИК
-    "пик": "PIKK",
-    "пик сз": "PIKK",
-    # ЛСР
-    "лср": "LSRG",
-    "группа лср": "LSRG",
-    # Самолет
-    "самолет": "SMLT",
-    "гк самолет": "SMLT",
-    # Эталон
-    "эталон": "ETLN",
-    "группа эталон": "ETLN",
-    # ИНГРАД
-    "инград": "INGR",
-    # Распадская
-    "распадская": "RASP",
-    # Мечел
-    "мечел": "MTLR",
-    "мечел-ао": "MTLR",
-    "мечел-ап": "MTLRP",
-    # ЧМК
-    "чмк": "CHMK",
-    # Уралавтоприцеп / Уральская кузница
-    "уральская кузница": "URKZ",
-    # ВСМПО-АВИСМА
-    "всмпо-ависма": "VSMO",
-    "корпорация всмпо-ависма": "VSMO",
-    # ЮГК
-    "югк": "UGLD",
-    # ТМК
-    "тмк": "TRMK",
-    "трубная металлургическая компания": "TRMK",
-    # Русснефть
-    "русснефть": "RNFT",
-    "русснефть-ао": "RNFT",
-    # НКХП
-    "нкхп": "NKHP",
-    # КуйбышевАзот
-    "куйбышевазот": "KAZT",
-    "куйбышевазот-п": "KAZTP",
-    # КАМАЗ
-    "камаз": "KMAZ",
-    # АФК Система
-    "афк система": "AFKS",
-    "система": "AFKS",
-    # ВК
-    "вк": "VKCO",
-    # Яндекс (варианты)
-    "яндекс": "YDEX",
-    # М.видео
-    "м.видео": "MVID",
-    "мвидео": "MVID",
-    # О'KEY
-    "o`key group": "OKEY",
-    "окей": "OKEY",
-    # Кто
-    "кто": None,
-    # Индексы (пропускаем)
-    "индекс мосбиржи": None,
-    "индекс дивидендных акций": None,
-    "индекс акций роста рф": None,
-    "компании стабильных дивидендов": None,
-    "компании largecap": None,
-    "компании mediumcap": None,
-    "компании smallcap": None,
-    "компании microcap": None,
-    "irdiv. индекс дивидендных акций": None,
-    "irgro. индекс акций роста рф": None,
-}
+def _parse_debug_file(df_debug: pd.DataFrame) -> dict:
+    """Парсит файл Отладка.xlsx и возвращает словарь overrides.
+    Пустые ячейки игнорируются — значения берутся из Источников."""
+    overrides = {}
+    if df_debug is None or df_debug.empty:
+        return overrides
+    
+    cols = {str(c).strip().lower(): c for c in df_debug.columns}
+    t_col = next((c for k, c in cols.items() if 'тикер' in k), None)
+    dsi_col = next((c for k, c in cols.items() if 'dsi' in k), None)
+    ars_col = next((c for k, c in cols.items() if 'арсагера' in k), None)
+    div_col = next((c for k, c in cols.items() if 'див' in k or '12м' in k), None)
+    sec_col = next((c for k, c in cols.items() if 'сектор' in k), None)
+    
+    if not t_col:
+        return overrides
+    
+    for _, row in df_debug.iterrows():
+        t = str(row[t_col]).strip().upper() if pd.notna(row[t_col]) else None
+        if not t or t in {'ТИКЕР', 'TICKER', 'NAN', '-'}:
+            continue
+        
+        entry = {}
+        if dsi_col and pd.notna(row[dsi_col]):
+            try:
+                val = float(str(row[dsi_col]).replace(',', '.'))
+                if val > 0:
+                    entry["dsi"] = val
+            except:
+                pass
+        if ars_col and pd.notna(row[ars_col]):
+            try:
+                val = int(float(str(row[ars_col]).replace(',', '.')))
+                if val > 0:
+                    entry["ars_group"] = val
+            except:
+                pass
+        if div_col and pd.notna(row[div_col]):
+            try:
+                val = float(str(row[div_col]).replace(',', '.'))
+                if val > 0:
+                    entry["div_12m"] = val
+            except:
+                pass
+        if sec_col and pd.notna(row[sec_col]):
+            entry["sector"] = str(row[sec_col]).strip()
+        
+        if entry:
+            overrides[t] = entry
+    
+    return overrides
+
+
+def _parse_index_div_yield(df_dsi: pd.DataFrame) -> float:
+    """Парсит доходность индекса 'Компании стабильных дивидендов' из листа DSI."""
+    if df_dsi is None or df_dsi.empty:
+        return 0.0
+    col_name = next((c for c in df_dsi.columns if 'Акция' in str(c)), None)
+    col_yield = next((c for c in df_dsi.columns if 'Доходность' in str(c)), None)
+    if not col_name or not col_yield:
+        return 0.0
+    
+    for _, row in df_dsi.iterrows():
+        name = str(row[col_name]).strip().lower() if pd.notna(row[col_name]) else ""
+        if 'компани' in name and 'стабильн' in name and 'дивиденд' in name:
+            try:
+                yield_val = float(str(row[col_yield]).replace(',', '.'))
+                return yield_val
+            except:
+                pass
+    return 0.0
 
 
 # ============================================================
@@ -480,9 +211,9 @@ DSI_NAME_TO_TICKER = {
 # ============================================================
 _TICKER_RE = re.compile(r'^[A-ZА-Я0-9]{1,10}$')
 _W_ALIASES = {
-    "вверх":  "вверх",  "up":  "вверх",  "рост":  "вверх",
-    "вниз":   "вниз",   "down":  "вниз",  "падение":  "вниз",
-    "рейндж":  "рейндж",  "range":  "рейндж",  "боковик":  "рейндж",  "flat":  "рейндж",
+    "вверх": "вверх", "up": "вверх", "рост": "вверх",
+    "вниз": "вниз", "down": "вниз", "падение": "вниз",
+    "рейндж": "рейндж", "range": "рейндж", "боковик": "рейндж", "flat": "рейндж",
 }
 
 
@@ -549,38 +280,21 @@ def _parse_arsagera(df_ars) -> tuple[dict, dict]:
     return ars_dict, name_index
 
 
-def _parse_dsi(df_dsi, name_index: dict) -> tuple[dict, list[str]]:
-    """Парсит DSI из Excel. Возвращает (dsi_dict, unmapped_names).
-    unmapped_names — список названий, которые не удалось привязать к тикерам."""
+def _parse_dsi(df_dsi, name_index: dict) -> dict:
     dsi_dict = {}
-    unmapped_names = []
-    if df_dsi is None or df_dsi.empty:
-        return dsi_dict, unmapped_names
+    if df_dsi is None or df_dsi.empty: return dsi_dict
     col_name = next((c for c in df_dsi.columns if 'Акция' in str(c)), None)
-    col_dsi  = next((c for c in df_dsi.columns if 'DSI' in str(c)), None)
-    if not col_name or not col_dsi:
-        return dsi_dict, unmapped_names
+    col_dsi = next((c for c in df_dsi.columns if 'DSI' in str(c)), None)
+    if not col_name or not col_dsi: return dsi_dict
     for _, row in df_dsi.iterrows():
         name = row[col_name]
         dsi_val = row[col_dsi]
-        if pd.isna(name) or pd.isna(dsi_val):
-            continue
-        name_str = str(name).strip()
-        name_lower = name_str.lower()
-        # 1. Проверяем явный маппинг
-        ticker = DSI_NAME_TO_TICKER.get(name_lower)
-        # 2. Если нет — пробуем через Арсагер
-        if ticker is None:
-            ticker = _lookup_ticker(name, name_index)
+        if pd.isna(name) or pd.isna(dsi_val): continue
+        ticker = _lookup_ticker(name, name_index)
         if ticker and ticker not in dsi_dict:
-            try:
-                dsi_dict[ticker] = float(dsi_val)
-            except (TypeError, ValueError):
-                continue
-        elif ticker is None and dsi_val != 0:
-            # Запоминаем нераспознанное название (только если DSI > 0)
-            unmapped_names.append(name_str)
-    return dsi_dict, unmapped_names
+            try: dsi_dict[ticker] = float(dsi_val)
+            except (TypeError, ValueError): continue
+    return dsi_dict
 
 
 def _parse_w_any(xls: pd.ExcelFile) -> dict:
@@ -629,7 +343,7 @@ def _parse_dividends_sheet(xls: pd.ExcelFile) -> tuple[dict, list]:
     d_close_col = next((c for k, c in cols.items() if 'закрыт' in k or 'реестр' in k), None)
     d_pay_col = next((c for k, c in cols.items() if 'выплат' in k), None)
     d_buy_col = next((c for k, c in cols.items() if 'купить' in k), None)
-    if not t_col or not v_col:
+    if not t_col or not v_col: 
         return {}, []
     def parse_date(val):
         if pd.isna(val): return None
@@ -654,14 +368,14 @@ def _parse_dividends_sheet(xls: pd.ExcelFile) -> tuple[dict, list]:
     now = pd.Timestamp.now().normalize()
     for _, row in df.iterrows():
         t = str(row[t_col]).strip().upper()
-        if not t or t in {'NAN', '-'} or not _TICKER_RE.match(t):
+        if not t or t in {'NAN', '-'} or not _TICKER_RE.match(t): 
             continue
         dt_check = None
         for col in [d_close_col, d_pay_col, d_buy_col]:
             if col and not pd.isna(row[col]):
                 dt_check = parse_date(row[col])
                 if dt_check: break
-        if dt_check is None or dt_check < now:
+        if dt_check is None or dt_check < now: 
             continue
         if pd.isna(row[v_col]): continue
         try:
@@ -692,7 +406,7 @@ def _parse_portfolio_any(df_raw: pd.DataFrame, df_stocks: pd.DataFrame) -> tuple
     p_candidates = [c for k, c in cols.items() if 'твх' in k or 'средн' in k or 'цена входа' in k]
     q_candidates = [c for k, c in cols.items() if 'лотов' in k or 'колич' in k or 'кол-во' in k]
     s_candidates = [c for k, c in cols.items() if 'сектор' in k]
-    if not t_candidates or not p_candidates or not q_candidates:
+    if not t_candidates or not p_candidates or not q_candidates: 
         return [], 0.0
     t_col = t_candidates[0]
     p_col = p_candidates[0]
@@ -771,9 +485,12 @@ with st.sidebar:
                 if 'Рейтинг арсагера' in xls.sheet_names:
                     ars_dict, name_index = _parse_arsagera(pd.read_excel(xls, sheet_name='Рейтинг арсагера', header=None))
                 dsi_dict = {}
-                unmapped_dsi_names = []
+                index_div_yield = 0.0
                 if 'ДОХОД DSI' in xls.sheet_names:
-                    dsi_dict, unmapped_dsi_names = _parse_dsi(pd.read_excel(xls, sheet_name='ДОХОД DSI'), name_index)
+                    df_dsi = pd.read_excel(xls, sheet_name='ДОХОД DSI')
+                    dsi_dict = _parse_dsi(df_dsi, name_index)
+                    # Парсим доходность индекса "Компании стабильных дивидендов"
+                    index_div_yield = _parse_index_div_yield(df_dsi)
                 div_dict, div_list = {}, []
                 if any('дивиденд' in s.lower() for s in xls.sheet_names):
                     div_dict, div_list = _parse_dividends_sheet(xls)
@@ -783,20 +500,35 @@ with st.sidebar:
                 fund_data = {t: {"ars_group": ars_dict.get(t, 0), "dsi": dsi_dict.get(t, 0.0)} for t in set(ars_dict) | set(dsi_dict)}
                 if fund_data or div_dict:
                     state.set_global("fundamental_data", fund_data)
-                    # Сохраняем нераспознанные названия для вкладки "Отладка"
-                    if unmapped_dsi_names:
-                        state.set_global("unmapped_dsi_names", unmapped_dsi_names)
-                    else:
-                        state.set_global("unmapped_dsi_names", [])
+                    # Сохраняем доходность индекса
+                    if index_div_yield > 0:
+                        state.set_global("index_div_yield", index_div_yield)
                     st.session_state["_src_hash"] = _h
                     msg = f"Загружено {len(fund_data)} записей."
                     if div_list: msg += f" Будущих дивидендов: {len(div_list)}."
-                    if unmapped_dsi_names:
-                        msg += f" ⚠️ Нераспознанных названий DSI: {len(unmapped_dsi_names)}."
+                    if index_div_yield > 0:
+                        msg += f" Доходность индекса стаб.див: {index_div_yield*100:.2f}%."
                     st.success(msg)
                     state.autosave()
                 else:
                     st.error("Загружено 0 записей.")
+            except Exception as e: st.error(f"Ошибка: {e}")
+
+    # === НОВОЕ: Импорт файла Отладка ===
+    debug_file = st.file_uploader("Импорт Отладка", type=["xlsx", "xls"], key="upl_debug")
+    if debug_file is not None:
+        _h = _file_hash(debug_file)
+        if st.session_state.get("_debug_hash") != _h:
+            try:
+                df_debug = pd.read_excel(debug_file)
+                new_overrides = _parse_debug_file(df_debug)
+                if new_overrides:
+                    state.set_global("ticker_overrides", new_overrides)
+                    st.session_state["_debug_hash"] = _h
+                    st.success(f"Отладка загружена: {len(new_overrides)} корректировок")
+                    state.autosave()
+                else:
+                    st.error("Не найдены тикеры или корректировки.")
             except Exception as e: st.error(f"Ошибка: {e}")
 
     port_file = st.file_uploader("Импорт Портфеля", type=["xlsx", "xls"], key="upl_port")
@@ -809,7 +541,7 @@ with st.sidebar:
                 if records:
                     state.set_global("portfolio_data", records)
                     state.set_global("portfolio_cash_file", cash)
-                    state.set_global("portfolio_cash", cash)
+                    state.set_global("portfolio_cash", cash) 
                     st.session_state["ui_cash_rub"] = cash
                     rebal_sectors, rebal_tickers = _parse_rebalance_table(df_raw)
                     if rebal_sectors:
@@ -906,11 +638,11 @@ with tab_calc:
         st.info("Выберите тикер на вкладке 'Обзор' или загрузите Портфель.")
     else:
         active = seg("Инструмент", all_tickers, key="plan_ticker", default=all_tickers[0])
-        if not active or active not in all_tickers:
+        if not active or active not in all_tickers: 
             active = all_tickers[0]
-        try:
+        try: 
             render_trade_planner(active, df_stocks)
-        except Exception as e:
+        except Exception as e: 
             st.error(f"Ошибка: {e}")
 
 state.autosave()
