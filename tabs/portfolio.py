@@ -8,13 +8,25 @@ from core.market import fetch_moex_stocks, fetch_moex_indices, fetch_extreme_clo
 from core.ranking import calc_ranking
 from core.calc import get_instrument
 
+def _fmt2(x):
+    try:
+        return f"{float(x):,.2f}".replace(',', ' ').replace('.', ',')
+    except (ValueError, TypeError):
+        return str(x)
+
+def _fmt_signed(x):
+    try:
+        val = float(x)
+        sign = "+" if val > 0 else ""
+        return f"{sign}{val:,.2f}".replace(',', ' ').replace('.', ',')
+    except (ValueError, TypeError):
+        return str(x)
 
 def _normalize_index_div_yield(raw: float) -> float:
     raw = float(raw)
     if 0 < raw < 1.5:
         return raw * 100
     return raw
-
 
 def render_portfolio(df_stocks: pd.DataFrame):
     st.subheader("Портфель")
@@ -89,7 +101,7 @@ def render_portfolio(df_stocks: pd.DataFrame):
     if target_cash_pct > 0:
         fill_pct = (current_cash_pct / target_cash_pct) * 100
         diff_pct = current_cash_pct - target_cash_pct
-        st.caption(f"Текущий кеш: **{current_cash_pct:.1f}%**. Цель: **{target_cash_pct:.1f}%**. Заполнено: **{fill_pct:.1f}%**.")
+        st.caption(f"Текущий кеш: **{_fmt2(current_cash_pct)}%**. Цель: **{_fmt2(target_cash_pct)}%**. Заполнено: **{_fmt2(fill_pct)}%**.")
         st.progress(min(max(fill_pct / 100, 0.0), 1.0))
         if diff_pct < -0.1:
             st.info(f"Для достижения нормы необходимо добавить {abs(diff_pct):.1f}% кеша.")
@@ -109,7 +121,7 @@ def render_portfolio(df_stocks: pd.DataFrame):
     if not planned_amounts:
         st.warning("Таблица «Ребалансировка» пуста. Рекомендации будут равны 0.")
 
-    st.caption(f"Ставка ЦБ: **{cb_rate:.2f}%** | Доходность индекса стаб.див: **{index_div_yield:.2f}%**")
+    st.caption(f"Ставка ЦБ: **{_fmt2(cb_rate)}%** | Доходность индекса стаб.див: **{_fmt2(index_div_yield)}%**")
 
     rows = []
     total_value = 0.0
@@ -156,7 +168,6 @@ def render_portfolio(df_stocks: pd.DataFrame):
         ticker_score = score_map.get(t, 0)
         target_amount = planned_amounts.get(t, 0.0)
         
-        # ИСПРАВЛЕНИЕ: Унифицированная логика расчета лотов (как в rebalance.py)
         price_for_calc = current_price if current_price > 0 else avg_price
         if price_for_calc > 0 and target_amount > 0:
             target_lots = int(math.floor((target_amount / (price_for_calc * lot_size)) + 0.5))
@@ -186,15 +197,15 @@ def render_portfolio(df_stocks: pd.DataFrame):
             "Рыночная цена": current_price,
             "ТВХ": avg_price,
             "Лотов": lots,
-            "Вложено, ₽": cost,               # ДОБАВЛЕНО
-            "Текущая стоимость, ₽": value,    # ДОБАВЛЕНО
+            "Вложено, ₽": cost,
+            "Текущая стоимость, ₽": value,
             "Прибыль или убыток": pl_rub,
             "P/L %": pl_pct,
             "Дивиденды за 12 мес.": div_12m,
             "Див. доходность": div_yield_tvh,
             "Див брутто": gross_div,
             "Див нетто": net_div,
-            "Целевые лоты": target_lots,      # ПЕРЕИМЕНОВАНО для ясности
+            "Целевые лоты": target_lots,
             "Действия": action_str,
         })
 
@@ -203,8 +214,6 @@ def render_portfolio(df_stocks: pd.DataFrame):
 
     def style_pl(row):
         styles = [""] * len(row)
-        
-        # 2: Вид актива
         color = row["Вид актива"]
         if color == "green":
             styles[2] = "background-color: #4CAF50; color: #4CAF50;"
@@ -215,7 +224,6 @@ def render_portfolio(df_stocks: pd.DataFrame):
         elif color == "red":
             styles[2] = "background-color: #F44336; color: #F44336;"
 
-        # 3: Баллы
         score = float(row["Баллы"])
         if score >= 700:
             styles[3] = "background-color: #4CAF50; color: white; font-weight: bold;"
@@ -224,7 +232,6 @@ def render_portfolio(df_stocks: pd.DataFrame):
         else:
             styles[3] = "background-color: #F44336; color: white; font-weight: bold;"
 
-        # 9: Прибыль или убыток, 10: P/L %
         if row["Прибыль или убыток"] > 0:
             styles[9] = "color: #4CAF50; font-weight: bold;"
             styles[10] = "color: #4CAF50; font-weight: bold;"
@@ -232,7 +239,6 @@ def render_portfolio(df_stocks: pd.DataFrame):
             styles[9] = "color: #F44336; font-weight: bold;"
             styles[10] = "color: #F44336; font-weight: bold;"
 
-        # 12: Див. доходность
         div_yield = row["Див. доходность"]
         if div_yield >= cb_rate:
             styles[12] = "background-color: #4CAF50; color: white; font-weight: bold;"
@@ -241,7 +247,6 @@ def render_portfolio(df_stocks: pd.DataFrame):
         else:
             styles[12] = "background-color: #F44336; color: white; font-weight: bold;"
 
-        # 16: Действия
         act = row["Действия"]
         if "Купить" in act:
             styles[16] = "background-color: #C8E6C9; color: #1B5E20; font-weight: bold;"
@@ -263,17 +268,17 @@ def render_portfolio(df_stocks: pd.DataFrame):
         .format({
             "Вид актива": lambda x: "",
             "Баллы": "{:.0f}",
-            "Рыночная цена": "{:.2f}",
-            "ТВХ": "{:.2f}",
+            "Рыночная цена": _fmt2,
+            "ТВХ": _fmt2,
             "Лотов": "{:.0f}",
-            "Вложено, ₽": "{:,.0f}",
-            "Текущая стоимость, ₽": "{:,.0f}",
-            "Прибыль или убыток": "{:+,.0f}",
-            "P/L %": "{:+.2f}%",
-            "Дивиденды за 12 мес.": "{:.2f}",
-            "Див. доходность": "{:.2f}%",
-            "Див брутто": "{:,.0f}",
-            "Див нетто": "{:,.0f}",
+            "Вложено, ₽": _fmt2,
+            "Текущая стоимость, ₽": _fmt2,
+            "Прибыль или убыток": _fmt_signed,
+            "P/L %": lambda x: f"{'+' if float(x)>0 else ''}{float(x):.2f}%",
+            "Дивиденды за 12 мес.": _fmt2,
+            "Див. доходность": lambda x: f"{float(x):.2f}%",
+            "Див брутто": _fmt2,
+            "Див нетто": _fmt2,
             "Целевые лоты": "{:.0f}",
         })
     )
@@ -282,7 +287,7 @@ def render_portfolio(df_stocks: pd.DataFrame):
     
     st.caption(
         f"Всего позиций: {len(df_res)} | "
-        f"Вложено: {total_cost:,.0f} ₽ | "
-        f"Текущая стоимость: {total_value:,.0f} ₽ | "
-        f"Общий P/L: {total_value - total_cost:+,.0f} ₽"
+        f"Вложено: {_fmt2(total_cost)} ₽ | "
+        f"Текущая стоимость: {_fmt2(total_value)} ₽ | "
+        f"Общий P/L: {_fmt_signed(total_value - total_cost)} ₽"
     )
