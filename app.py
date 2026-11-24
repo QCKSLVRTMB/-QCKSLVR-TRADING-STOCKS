@@ -24,8 +24,7 @@ inject_css()
 S = state.get_state()
 G = S["global"]
 
-# Загрузка данных MOEX с индикатором
-with st.spinner("⏳ Загрузка котировок MOEX..."):
+with st.spinner("Загрузка котировок MOEX..."):
     df_stocks = fetch_moex_stocks()
 
 def _sync(key, gkey):
@@ -37,13 +36,12 @@ def _sync_extreme():
         datetime.strptime(val, "%d.%m.%Y")
         state.set_global("extreme_date", val)
     except ValueError:
-        st.error("❌ Неверный формат даты. Используйте DD.MM.YYYY")
+        st.error("Неверный формат даты. Используйте DD.MM.YYYY")
 
 def _file_hash(f) -> str:
     return hashlib.md5(f.getvalue()).hexdigest()
 
 def _parse_cash_value(val) -> float:
-    """Парсинг значения кеша из ячейки Excel."""
     if pd.isna(val):
         return 0.0
     if isinstance(val, (int, float)):
@@ -58,7 +56,6 @@ def _parse_cash_value(val) -> float:
         return 0.0
 
 def _find_cash_by_keywords(df_raw: pd.DataFrame) -> tuple:
-    """Поиск кеша и плеча по ключевым словам."""
     cash_trader = 0.0
     total_cash = 0.0
     margin_loan = 0.0
@@ -83,7 +80,6 @@ def _find_cash_by_keywords(df_raw: pd.DataFrame) -> tuple:
     return cash_trader, total_cash, margin_loan
 
 def _parse_rebalance_table(df_raw: pd.DataFrame) -> tuple[list[dict], dict]:
-    """Парсинг таблицы ребалансировки из Excel."""
     sectors_data = []
     tickers_data = {}
     header_row_idx = None
@@ -135,7 +131,6 @@ def _parse_rebalance_table(df_raw: pd.DataFrame) -> tuple[list[dict], dict]:
     return sectors_data, tickers_data
 
 def _parse_debug_file(df_debug: pd.DataFrame) -> dict:
-    """Парсит файл Отладка.xlsx и возвращает словарь overrides."""
     overrides = {}
     if df_debug is None or df_debug.empty:
         return overrides
@@ -157,21 +152,21 @@ def _parse_debug_file(df_debug: pd.DataFrame) -> dict:
                 val = float(str(row[dsi_col]).replace(',', '.'))
                 if val > 0:
                     entry["dsi"] = val
-            except:
+            except Exception:
                 pass
         if ars_col and pd.notna(row[ars_col]):
             try:
                 val = int(float(str(row[ars_col]).replace(',', '.')))
                 if val > 0:
                     entry["ars_group"] = val
-            except:
+            except Exception:
                 pass
         if div_col and pd.notna(row[div_col]):
             try:
                 val = float(str(row[div_col]).replace(',', '.'))
                 if val > 0:
                     entry["div_12m"] = val
-            except:
+            except Exception:
                 pass
         if sec_col and pd.notna(row[sec_col]):
             entry["sector"] = str(row[sec_col]).strip()
@@ -180,7 +175,6 @@ def _parse_debug_file(df_debug: pd.DataFrame) -> dict:
     return overrides
 
 def _parse_index_div_yield(df_dsi: pd.DataFrame) -> float:
-    """Парсит доходность индекса 'Компании стабильных дивидендов' из листа DSI."""
     if df_dsi is None or df_dsi.empty:
         return 0.0
     col_name = next((c for c in df_dsi.columns if 'Акция' in str(c)), None)
@@ -194,7 +188,7 @@ def _parse_index_div_yield(df_dsi: pd.DataFrame) -> float:
                 yield_val = float(str(row[col_yield]).replace(',', '.'))
                 if yield_val > 0:
                     return yield_val
-            except:
+            except Exception:
                 pass
     return 0.0
 
@@ -236,7 +230,6 @@ def _split_class(raw) -> tuple[str, str]:
     return s_norm, "common"
 
 def _lookup_ticker(name, name_index: dict):
-    """Поиск тикера по названию с fallback на любой класс акций."""
     base, cls = _split_class(name)
     if not base:
         return None
@@ -288,7 +281,6 @@ def _parse_arsagera(df_ars) -> tuple[dict, dict]:
     return ars_dict, name_index
 
 def _to_float_safe(v):
-    """Нормализует число: запятая, пробелы, валюта, проценты, NBSP."""
     if v is None or (isinstance(v, float) and pd.isna(v)):
         return None
     if isinstance(v, (int, float)):
@@ -307,7 +299,6 @@ def _to_float_safe(v):
         return None
 
 def _is_12m_period(p) -> bool:
-    """'всего 12м' / '12м' / '12 м' / '12мес' / '12 месяцев'."""
     if p is None or (isinstance(p, float) and pd.isna(p)):
         return False
     s = str(p).strip().lower()
@@ -316,7 +307,6 @@ def _is_12m_period(p) -> bool:
     return ("12м" in s) or ("12 м" in s)
 
 def _parse_dsi(df_dsi, name_index: dict) -> tuple[dict, dict]:
-    """DSI + 'всего 12м'. Возвращает (dsi_dict, div_12m_dict)."""
     dsi_dict: dict = {}
     div_12m_dict: dict = {}
     if df_dsi is None or df_dsi.empty:
@@ -388,7 +378,6 @@ def _parse_w_any(xls: pd.ExcelFile) -> dict:
     return result
 
 def _parse_dividends_sheet(xls: pd.ExcelFile) -> tuple[dict, list]:
-    """Парсит дивиденды из листа Дивиденды."""
     sheet_name = next((s for s in xls.sheet_names if "дивиденд" in s.lower()), None)
     if not sheet_name:
         return {}, []
@@ -462,7 +451,6 @@ def _parse_dividends_sheet(xls: pd.ExcelFile) -> tuple[dict, list]:
     return summed, div_list
 
 def _parse_portfolio_any(df_raw: pd.DataFrame, df_stocks: pd.DataFrame) -> tuple[list[dict], float]:
-    """Парсинг портфеля из Excel."""
     if df_raw is None or df_raw.empty:
         return [], 0.0
     cash_trader = 0.0
@@ -523,36 +511,32 @@ def _parse_portfolio_any(df_raw: pd.DataFrame, df_stocks: pd.DataFrame) -> tuple
     return records, cash_val
 
 # ============================================================
-# Сайдбар с улучшенным интерфейсом
+# Сайдбар
 # ============================================================
 with st.sidebar:
-    # Заголовок приложения
-    st.markdown(f"# 📊 {APP_TITLE}")
+    st.header(APP_TITLE)
     st.caption(f"Версия схемы: {state.SCHEMA_VERSION if hasattr(state, 'SCHEMA_VERSION') else 'N/A'}")
     st.divider()
-    
+
     # Статус подключения к MOEX
     if df_stocks.empty:
-        st.error("❌ MOEX недоступен")
-        st.caption("Проверьте подключение к интернету")
+        st.error("MOEX недоступен. Проверьте подключение к интернету.")
     else:
-        st.success(f"✅ MOEX подключен")
-        st.caption(f"Загружено акций: **{len(df_stocks)}**")
+        st.success(f"MOEX подключен. Загружено акций: {len(df_stocks)}")
     st.divider()
-    
-    # ⚙️ Настройки
-    st.markdown("### ⚙️ Настройки")
-    
+
+    st.header("Настройки")
+
     st.text_input(
-        "📅 Дата экстремума",
+        "Дата экстремума",
         value=G["extreme_date"],
         key="sb_extreme",
         on_change=_sync_extreme,
         help="Дата локального экстремума рынка (DD.MM.YYYY). Используется для расчета относительной силы акций."
     )
-    
+
     st.number_input(
-        "💰 Ставка ЦБ, %",
+        "Ставка ЦБ, %",
         value=float(G["cb_rate"]),
         step=0.25,
         format="%.2f",
@@ -561,9 +545,9 @@ with st.sidebar:
         args=("sb_cb", "cb_rate"),
         help="Ключевая ставка ЦБ РФ. Используется как порог для дивидендной доходности."
     )
-    
+
     st.number_input(
-        "🏦 Резерв кэша, %",
+        "Резерв кэша, %",
         value=float(G["cash_reserve"]),
         step=1.0,
         min_value=0.0,
@@ -573,28 +557,27 @@ with st.sidebar:
         args=("sb_cash", "cash_reserve"),
         help="Целевая доля кеша в портфеле для ребалансировки."
     )
-    
+
     st.checkbox(
-        "📱 Мобильный вид",
+        "Мобильный вид",
         value=G.get("mobile_view", False),
         key="sb_mobile",
         on_change=_sync,
         args=("sb_mobile", "mobile_view"),
         help="Оптимизировать интерфейс для мобильных устройств."
     )
-    
+
     st.divider()
-    
-    # 💼 Сводка портфеля (если загружен)
+
+    # Сводка портфеля
     portfolio_data = G.get("portfolio_data", [])
     portfolio_cash = float(G.get("portfolio_cash", 0.0))
-    
+
     if portfolio_data:
-        st.markdown("### 💼 Портфель")
+        st.header("Портфель")
         st.metric("Позиций", len(portfolio_data))
-        st.metric("Кеш", f"{portfolio_cash:,.0f} ₽")
-        
-        # Подсчет стоимости портфеля
+        st.metric("Кеш", f"{portfolio_cash:,.0f} руб.")
+
         total_value = portfolio_cash
         for p in portfolio_data:
             ticker = p.get("Тикер")
@@ -605,13 +588,12 @@ with st.sidebar:
                     price = row["PRICE"].values[0]
                     lot_size = row["LOTSIZE"].values[0]
                     total_value += price * lots * lot_size
-        st.metric("Всего", f"{total_value:,.0f} ₽")
+        st.metric("Всего", f"{total_value:,.0f} руб.")
         st.divider()
-    
-    # 📥 Импорт данных
-    st.markdown("### 📥 Импорт данных")
-    
-    st.markdown("#### 📈 Технические данные")
+
+    st.header("Импорт данных")
+
+    st.markdown("#### Технические данные")
     w_file = st.file_uploader(
         "W-формации",
         type=["xlsx", "xls"],
@@ -627,14 +609,14 @@ with st.sidebar:
                 if new_w:
                     state.set_global("w_formations", new_w)
                     st.session_state["_w_hash"] = _h
-                    st.success(f"✅ Загружено: {len(new_w)}")
+                    st.success(f"W-формации загружены: {len(new_w)}")
                     state.autosave()
                 else:
-                    st.error("❌ Не найдены направления.")
+                    st.error("Не найдены направления.")
             except Exception as e:
-                st.error(f"❌ Ошибка: {e}")
-    
-    st.markdown("#### 📊 Фундаментальные данные")
+                st.error(f"Ошибка: {e}")
+
+    st.markdown("#### Фундаментальные данные")
     sources_file = st.file_uploader(
         "Источники (DSI, Арсагера, Дивиденды)",
         type=["xlsx", "xls"],
@@ -670,17 +652,24 @@ with st.sidebar:
                 if index_div_yield > 0:
                     state.set_global("index_div_yield", index_div_yield)
                 st.session_state["_src_hash"] = _h
-                msg = f"✅ Загружено {len(fund_data)} записей."
+                msg = f"Загружено {len(fund_data)} записей."
                 if div_list:
-                    msg += f" Дивидендов: {len(div_list)}."
+                    msg += f" Будущих дивидендов: {len(div_list)}."
+                if div_12m_from_dsi:
+                    msg += f" Дивидендов '12м' из DSI: {len(div_12m_from_dsi)}."
+                lkoh_12m = div_12m_from_dsi.get("LKOH")
+                if lkoh_12m:
+                    msg += f" LKOH 12м = {lkoh_12m:g}."
+                else:
+                    msg += " LKOH не найден в 12м."
                 if index_div_yield > 0:
-                    msg += f" Дох. индекса: {index_div_yield*100:.2f}%."
+                    msg += f" Доходность индекса стаб.див: {index_div_yield*100:.2f}%."
                 st.success(msg)
                 state.autosave()
             except Exception as e:
-                st.error(f"❌ Ошибка: {e}")
-    
-    st.markdown("#### 🐛 Корректировки")
+                st.error(f"Ошибка: {e}")
+
+    st.markdown("#### Корректировки")
     debug_file = st.file_uploader(
         "Отладка (ручные правки)",
         type=["xlsx", "xls"],
@@ -696,14 +685,14 @@ with st.sidebar:
                 if new_overrides:
                     state.set_global("ticker_overrides", new_overrides)
                     st.session_state["_debug_hash"] = _h
-                    st.success(f"✅ Корректировок: {len(new_overrides)}")
+                    st.success(f"Отладка загружена: {len(new_overrides)} корректировок")
                     state.autosave()
                 else:
-                    st.error("❌ Не найдены тикеры.")
+                    st.error("Не найдены тикеры или корректировки.")
             except Exception as e:
-                st.error(f"❌ Ошибка: {e}")
-    
-    st.markdown("#### 💼 Портфель")
+                st.error(f"Ошибка: {e}")
+
+    st.markdown("#### Портфель")
     port_file = st.file_uploader(
         "Портфель (позиции и кеш)",
         type=["xlsx", "xls"],
@@ -730,36 +719,35 @@ with st.sidebar:
                         for k in list(st.session_state.keys()):
                             if k.startswith("tags_"):
                                 del st.session_state[k]
-                        st.success(f"✅ Позиций: {len(records)}, Кеш: {cash:,.0f} ₽, Секторов: {len(rebal_sectors)}")
+                        st.success(f"Портфель загружен: {len(records)} позиций, кеш {cash:,.0f} руб., ребалансировка: {len(rebal_sectors)} секторов")
                     else:
-                        st.success(f"✅ Позиций: {len(records)}, Кеш: {cash:,.0f} ₽")
+                        st.success(f"Портфель загружен: {len(records)} позиций, кеш {cash:,.0f} руб.")
                     st.session_state["_port_hash"] = _h
                     state.autosave()
                 else:
-                    st.error("❌ Не найдены колонки Тикер / ТВХ / Лотов.")
+                    st.error("Не найдены колонки Тикер / ТВХ / Лотов.")
             except Exception as e:
-                st.error(f"❌ Ошибка: {e}")
-    
+                st.error(f"Ошибка: {e}")
+
     st.divider()
-    
-    # 📤 Экспорт / Импорт бэкапа
-    st.markdown("### 📤 Резервная копия")
-    
-    if st.button("💾 Подготовить экспорт JSON", use_container_width=True):
+
+    st.header("Резервная копия")
+
+    if st.button("Подготовить экспорт JSON", use_container_width=True):
         st.session_state["_export_requested"] = True
-    
+
     blob = st.session_state.get("_export_blob")
     if blob:
         st.download_button(
-            "⬇️ Скачать JSON",
+            "Скачать JSON",
             data=blob,
             file_name=f"backup_{datetime.now().strftime('%Y%m%d_%H%M')}.json",
             mime="application/json",
             use_container_width=True
         )
-    
-    json_file = st.file_uploader("📥 Импорт JSON", type=["json"], help="Восстановление из резервной копии")
-    if json_file and st.button("🔄 Применить бэкап", use_container_width=True):
+
+    json_file = st.file_uploader("Импорт JSON", type=["json"], help="Восстановление из резервной копии")
+    if json_file and st.button("Применить бэкап", use_container_width=True):
         parsed = storage.loads(json_file.getvalue().decode("utf-8"))
         if parsed:
             state.replace_state(parsed)
@@ -780,64 +768,57 @@ with st.sidebar:
                 st.session_state["rebal_sectors"] = pd.DataFrame(parsed["global"]["rebal_sectors_data"])
             if "rebal_tickers_data" in parsed["global"]:
                 st.session_state["rebal_tickers"] = parsed["global"]["rebal_tickers_data"]
-            st.success("✅ Загружено!")
+            st.success("Загружено!")
             st.rerun()
 
 # ============================================================
-# Вкладки с эмодзи
+# Вкладки
 # ============================================================
 tab_market, tab_rating, tab_indices, tab_portfolio, tab_dashboard, tab_rebalance, tab_debug, tab_calc = st.tabs([
-    "📊 Обзор",
-    "🏆 Рейтинг",
-    "📈 Индексы",
-    "💼 Портфель",
-    "📉 Дашборд",
-    "⚖️ Ребалансировка",
-    "🐛 Отладка",
-    "🧮 Калькулятор",
+    "Обзор", "Рейтинг", "Индексы", "Портфель", "Дашборд", "Ребалансировка", "Отладка", "Калькулятор",
 ])
 
 with tab_market:
     try:
         render_main_tab(df_stocks=df_stocks, deposit=state.g("portfolio_cash", 0))
     except Exception as e:
-        st.error(f"❌ Ошибка: {e}")
+        st.error(f"Ошибка: {e}")
 
 with tab_rating:
     try:
         render_rating()
     except Exception as e:
-        st.error(f"❌ Ошибка: {e}")
+        st.error(f"Ошибка: {e}")
 
 with tab_indices:
     try:
         render_indices()
     except Exception as e:
-        st.error(f"❌ Ошибка: {e}")
+        st.error(f"Ошибка: {e}")
 
 with tab_portfolio:
     try:
         render_portfolio(df_stocks=df_stocks)
     except Exception as e:
-        st.error(f"❌ Ошибка: {e}")
+        st.error(f"Ошибка: {e}")
 
 with tab_dashboard:
     try:
         render_dashboard(df_stocks=df_stocks)
     except Exception as e:
-        st.error(f"❌ Ошибка в Дашборде: {e}")
+        st.error(f"Ошибка в Дашборде: {e}")
 
 with tab_rebalance:
     try:
         render_rebalance()
     except Exception as e:
-        st.error(f"❌ Ошибка: {e}")
+        st.error(f"Ошибка: {e}")
 
 with tab_debug:
     try:
         render_debug()
     except Exception as e:
-        st.error(f"❌ Ошибка: {e}")
+        st.error(f"Ошибка: {e}")
 
 with tab_calc:
     active_tickers = G.get("active_tickers", [])
@@ -845,7 +826,7 @@ with tab_calc:
     portfolio_tickers = [p["Тикер"] for p in portfolio_data if "Тикер" in p]
     all_tickers = list(dict.fromkeys(active_tickers + portfolio_tickers))
     if not all_tickers:
-        st.info("💡 Выберите тикер на вкладке 'Обзор' или загрузите Портфель.")
+        st.info("Выберите тикер на вкладке 'Обзор' или загрузите Портфель.")
     else:
         active = seg("Инструмент", all_tickers, key="plan_ticker", default=all_tickers[0])
         if not active or active not in all_tickers:
@@ -853,7 +834,7 @@ with tab_calc:
         try:
             render_trade_planner(active, df_stocks)
         except Exception as e:
-            st.error(f"❌ Ошибка: {e}")
+            st.error(f"Ошибка: {e}")
 
 state.autosave()
 
