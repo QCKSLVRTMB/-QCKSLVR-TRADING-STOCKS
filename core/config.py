@@ -1,12 +1,14 @@
+# core/config.py
 from __future__ import annotations
 
 SCHEMA_VERSION = 5
 APP_TITLE = "Калькулятор акций MOEX"
-
 TREND_VALUES = ["вверх", "вниз", "рейндж"]
 DIRECTIONS = ["LONG", "SHORT"]
 
-DEFAULT_EXTREME_DATE = "20.07.2026"
+# ИЗМЕНЕНО: дата экстремума по умолчанию
+DEFAULT_EXTREME_DATE = "24.07.2026"
+
 DEFAULT_CB_RATE = 14.00
 DEFAULT_CASH_RESERVE = 20.0
 DEFAULT_TAX_RATE = 13.0
@@ -34,21 +36,21 @@ TARIFF_CONFIGS = {
 }
 
 INDEX_META = {
-    "MOEXCH": {"name": "Химия", "color": "#8BC34A"},
-    "MOEXCN": {"name": "Потребительский", "color": "#FF0000"},
-    "MOEXEU": {"name": "Энергетика", "color": "#1976D2"},
-    "MOEXFN": {"name": "Финансы", "color": "#009688"},
+    "MOEXCH":  {"name": "Химия", "color": "#8BC34A"},
+    "MOEXCN":  {"name": "Потребительский", "color": "#FF0000"},
+    "MOEXEU":  {"name": "Энергетика", "color": "#1976D2"},
+    "MOEXFN":  {"name": "Финансы", "color": "#009688"},
     "MOEXINN": {"name": "Инновации", "color": "#673AB7"},
-    "MOEXIT": {"name": "IT-сектор", "color": "#FFEB3B"},
-    "MOEXMM": {"name": "Металлы и добыча", "color": "#9E9E9E"},
-    "MOEXOG": {"name": "Нефтегазовый", "color": "#FFC107"},
-    "MOEXRE": {"name": "Строительство", "color": "#FF00FF"},
-    "MOEXTN": {"name": "Транспорт", "color": "#03A9F4"},
-    "MREDC":  {"name": "Недвижимость", "color": "#FFFFFF"},
+    "MOEXIT":  {"name": "IT-сектор", "color": "#FFEB3B"},
+    "MOEXMM":  {"name": "Металлы и добыча", "color": "#9E9E9E"},
+    "MOEXOG":  {"name": "Нефтегазовый", "color": "#FFC107"},
+    "MOEXRE":  {"name": "Строительство", "color": "#FF00FF"},
+    "MOEXTN":  {"name": "Транспорт", "color": "#03A9F4"},
+    "MREDC":   {"name": "Недвижимость", "color": "#FFFFFF"},
 }
 
 DEFAULT_W_FORMATIONS = {
-    "ABIO": "вверх", "ABRD": "вверх", "AFKS": "вниз", "AFLT": "вверх", 
+    "ABIO": "вверх", "ABRD": "вверх", "AFKS": "вниз", "AFLT": "вверх",
     "AKRN": "вверх", "ALRS": "вверх", "AMEZ": "вверх", "APTK": "вниз",
     "GAZP": "вниз", "SBER": "вверх", "LKOH": "вверх", "TATN": "вверх",
     "ROSN": "вниз", "NVTK": "вверх", "SIBN": "вверх", "TRNFP": "вверх"
@@ -63,7 +65,7 @@ DEFAULT_GLOBAL = {
     "mobile_view": False,
     "active_tickers": [],
     "w_formations": DEFAULT_W_FORMATIONS,
-    "fundamental_data": {}, # Только из Excel
+    "fundamental_data": {},
     "sector_weights": {"Нефтегаз": 35, "Финансы": 25, "Металлы": 30, "Разное": 10},
-    "portfolio_data": [] 
+    "portfolio_data": []
 }
