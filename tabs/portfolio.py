@@ -5,7 +5,7 @@ import pandas as pd
 import math
 from core import state
 from core.market import fetch_moex_stocks, fetch_moex_indices, fetch_extreme_close, fetch_many_dividends
-from core.ranking import calc_ranking, get_asset_color
+from core.ranking import calc_ranking
 from core.calc import get_instrument
 
 
@@ -27,7 +27,6 @@ def render_portfolio(df_stocks: pd.DataFrame):
     df_stocks_filtered = df_stocks[df_stocks["PRICE"] > 0].copy()
     extreme_date = state.g("extreme_date")
     cb_rate = float(state.g("cb_rate", 14.0))
-    # Приводим к процентам (11.98), чтобы сравнивать с div_yield в %
     index_div_yield = _normalize_index_div_yield(state.g("index_div_yield", 0.0))
 
     with st.spinner("Расчёт рейтинга акций портфеля..."):
@@ -90,7 +89,7 @@ def render_portfolio(df_stocks: pd.DataFrame):
     if target_cash_pct > 0:
         fill_pct = (current_cash_pct / target_cash_pct) * 100
         diff_pct = current_cash_pct - target_cash_pct
-        st.caption(f"Текущий кеш: **{current_cash_pct:.1f}%**. Цель: **{target_cash_pct:.1f}%. Заполнено: **{fill_pct:.1f}%**.")
+        st.caption(f"Текущий кеш: **{current_cash_pct:.1f}%**. Цель: **{target_cash_pct:.1f}%**. Заполнено: **{fill_pct:.1f}%**.")
         st.progress(min(max(fill_pct / 100, 0.0), 1.0))
         if diff_pct < -0.1:
             st.info(f"Для достижения нормы необходимо добавить {abs(diff_pct):.1f}% кеша.")
@@ -110,12 +109,12 @@ def render_portfolio(df_stocks: pd.DataFrame):
     if not planned_amounts:
         st.warning("Таблица «Ребалансировка» пуста. Рекомендации будут равны 0.")
 
-    # index_div_yield уже в процентах
     st.caption(f"Ставка ЦБ: **{cb_rate:.2f}%** | Доходность индекса стаб.див: **{index_div_yield:.2f}%**")
 
     rows = []
     total_value = 0.0
     total_cost = 0.0
+    
     for _, r in df_port.iterrows():
         t = str(r["Тикер"]).strip()
         avg_price = float(r["ТВХ"])
@@ -124,6 +123,7 @@ def render_portfolio(df_stocks: pd.DataFrame):
         current_price = inst.price if inst.price > 0 else avg_price
         lot_size = inst.lot_size if inst.lot_size > 0 else 1
         shares = lots * lot_size
+        
         cost = avg_price * shares
         value = current_price * shares
         pl_rub = value - cost
@@ -154,17 +154,18 @@ def render_portfolio(df_stocks: pd.DataFrame):
             asset_color = "red"
 
         ticker_score = score_map.get(t, 0)
-
         target_amount = planned_amounts.get(t, 0.0)
-        tvh_safe = avg_price if avg_price > 0 else current_price
-        if tvh_safe > 0 and target_amount > 0:
-            target_lots = math.floor((target_amount / (tvh_safe * lot_size)) + 0.5)
+        
+        # ИСПРАВЛЕНИЕ: Унифицированная логика расчета лотов (как в rebalance.py)
+        price_for_calc = current_price if current_price > 0 else avg_price
+        if price_for_calc > 0 and target_amount > 0:
+            target_lots = int(math.floor((target_amount / (price_for_calc * lot_size)) + 0.5))
         else:
             target_lots = 0
 
-        if div_yield_tvh > 0 and cb_rate > 0 and target_lots > 0:
-            lots_by_yield = math.floor((target_lots * (div_yield_tvh / cb_rate)) + 0.5)
-            action_lots = lots_by_yield - lots
+        action_lots = target_lots - lots
+
+        if target_amount > 0:
             if action_lots > 0:
                 action_str = f"Купить {action_lots}"
             elif action_lots < 0:
@@ -172,11 +173,11 @@ def render_portfolio(df_stocks: pd.DataFrame):
             else:
                 action_str = "Держать"
         else:
-            lots_by_yield = 0
             action_str = "—"
 
         total_value += value
         total_cost += cost
+        
         rows.append({
             "Название": inst.name,
             "Тикер": t,
@@ -185,14 +186,15 @@ def render_portfolio(df_stocks: pd.DataFrame):
             "Рыночная цена": current_price,
             "ТВХ": avg_price,
             "Лотов": lots,
+            "Вложено, ₽": cost,               # ДОБАВЛЕНО
+            "Текущая стоимость, ₽": value,    # ДОБАВЛЕНО
             "Прибыль или убыток": pl_rub,
             "P/L %": pl_pct,
             "Дивиденды за 12 мес.": div_12m,
             "Див. доходность": div_yield_tvh,
             "Див брутто": gross_div,
             "Див нетто": net_div,
-            "Доступно лотов": target_lots,
-            "Лотов по доходности": lots_by_yield,
+            "Целевые лоты": target_lots,      # ПЕРЕИМЕНОВАНО для ясности
             "Действия": action_str,
         })
 
@@ -201,6 +203,8 @@ def render_portfolio(df_stocks: pd.DataFrame):
 
     def style_pl(row):
         styles = [""] * len(row)
+        
+        # 2: Вид актива
         color = row["Вид актива"]
         if color == "green":
             styles[2] = "background-color: #4CAF50; color: #4CAF50;"
@@ -211,6 +215,7 @@ def render_portfolio(df_stocks: pd.DataFrame):
         elif color == "red":
             styles[2] = "background-color: #F44336; color: #F44336;"
 
+        # 3: Баллы
         score = float(row["Баллы"])
         if score >= 700:
             styles[3] = "background-color: #4CAF50; color: white; font-weight: bold;"
@@ -219,34 +224,37 @@ def render_portfolio(df_stocks: pd.DataFrame):
         else:
             styles[3] = "background-color: #F44336; color: white; font-weight: bold;"
 
+        # 9: Прибыль или убыток, 10: P/L %
         if row["Прибыль или убыток"] > 0:
-            styles[7] = "color: #4CAF50; font-weight: bold;"
-            styles[8] = "color: #4CAF50; font-weight: bold;"
+            styles[9] = "color: #4CAF50; font-weight: bold;"
+            styles[10] = "color: #4CAF50; font-weight: bold;"
         elif row["Прибыль или убыток"] < 0:
-            styles[7] = "color: #F44336; font-weight: bold;"
-            styles[8] = "color: #F44336; font-weight: bold;"
+            styles[9] = "color: #F44336; font-weight: bold;"
+            styles[10] = "color: #F44336; font-weight: bold;"
 
-        # Цвет дивидендной доходности:
-        # Зелёный: >= cb_rate; Синий: >= index_div_yield (и < cb_rate); иначе красный
+        # 12: Див. доходность
         div_yield = row["Див. доходность"]
         if div_yield >= cb_rate:
-            styles[10] = "background-color: #4CAF50; color: white; font-weight: bold;"
+            styles[12] = "background-color: #4CAF50; color: white; font-weight: bold;"
         elif index_div_yield > 0 and div_yield >= index_div_yield:
-            styles[10] = "background-color: #2196F3; color: white; font-weight: bold;"
+            styles[12] = "background-color: #2196F3; color: white; font-weight: bold;"
         else:
-            styles[10] = "background-color: #F44336; color: white; font-weight: bold;"
+            styles[12] = "background-color: #F44336; color: white; font-weight: bold;"
 
+        # 16: Действия
         act = row["Действия"]
         if "Купить" in act:
-            styles[15] = "background-color: #C8E6C9; color: #1B5E20; font-weight: bold;"
+            styles[16] = "background-color: #C8E6C9; color: #1B5E20; font-weight: bold;"
         elif "Продать" in act:
-            styles[15] = "background-color: #FFCDD2; color: #B71C1C; font-weight: bold;"
+            styles[16] = "background-color: #FFCDD2; color: #B71C1C; font-weight: bold;"
+            
         return styles
 
     display_df = df_res[[
         "Название", "Тикер", "Вид актива", "Баллы", "Рыночная цена", "ТВХ", "Лотов",
-        "Прибыль или убыток", "P/L %", "Дивиденды за 12 мес.", "Див. доходность",
-        "Див брутто", "Див нетто", "Доступно лотов", "Лотов по доходности", "Действия",
+        "Вложено, ₽", "Текущая стоимость, ₽", "Прибыль или убыток", "P/L %", 
+        "Дивиденды за 12 мес.", "Див. доходность", "Див брутто", "Див нетто", 
+        "Целевые лоты", "Действия",
     ]].copy()
 
     styled_df = (
@@ -258,21 +266,23 @@ def render_portfolio(df_stocks: pd.DataFrame):
             "Рыночная цена": "{:.2f}",
             "ТВХ": "{:.2f}",
             "Лотов": "{:.0f}",
-            "Прибыль или убыток": "{:+.0f}",
+            "Вложено, ₽": "{:,.0f}",
+            "Текущая стоимость, ₽": "{:,.0f}",
+            "Прибыль или убыток": "{:+,.0f}",
             "P/L %": "{:+.2f}%",
             "Дивиденды за 12 мес.": "{:.2f}",
             "Див. доходность": "{:.2f}%",
-            "Див брутто": "{:.0f}",
-            "Див нетто": "{:.0f}",
-            "Доступно лотов": "{:.0f}",
-            "Лотов по доходности": "{:.0f}",
+            "Див брутто": "{:,.0f}",
+            "Див нетто": "{:,.0f}",
+            "Целевые лоты": "{:.0f}",
         })
     )
 
     st.dataframe(styled_df, use_container_width=True, hide_index=True, height=40 + 35 * len(df_res) + 6)
+    
     st.caption(
-        f"Всего позиций: {len(df_res)} · "
-        f"Стоимость акций: {total_value:.0f} ₽ · "
-        f"Вложено: {total_cost:.0f} ₽ · "
-        f"Общий P/L: {total_value - total_cost:+.0f} ₽"
+        f"Всего позиций: {len(df_res)} | "
+        f"Вложено: {total_cost:,.0f} ₽ | "
+        f"Текущая стоимость: {total_value:,.0f} ₽ | "
+        f"Общий P/L: {total_value - total_cost:+,.0f} ₽"
     )
