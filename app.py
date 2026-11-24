@@ -518,7 +518,6 @@ with st.sidebar:
     st.caption(f"Версия схемы: {state.SCHEMA_VERSION if hasattr(state, 'SCHEMA_VERSION') else 'N/A'}")
     st.divider()
 
-    # Статус подключения к MOEX
     if df_stocks.empty:
         st.error("MOEX недоступен. Проверьте подключение к интернету.")
     else:
@@ -569,14 +568,19 @@ with st.sidebar:
 
     st.divider()
 
-    # Сводка портфеля
+    # Сводка портфеля с поддержкой отрицательного кеша (плеча)
     portfolio_data = G.get("portfolio_data", [])
     portfolio_cash = float(G.get("portfolio_cash", 0.0))
 
     if portfolio_data:
         st.header("Портфель")
         st.metric("Позиций", len(portfolio_data))
-        st.metric("Кеш", f"{portfolio_cash:,.0f} руб.")
+        
+        if portfolio_cash < 0:
+            st.metric("Долг (плечо)", f"{abs(portfolio_cash):,.0f} руб.")
+            st.warning("Портфель использует заемные средства.")
+        else:
+            st.metric("Кеш", f"{portfolio_cash:,.0f} руб.")
 
         total_value = portfolio_cash
         for p in portfolio_data:
@@ -588,7 +592,7 @@ with st.sidebar:
                     price = row["PRICE"].values[0]
                     lot_size = row["LOTSIZE"].values[0]
                     total_value += price * lots * lot_size
-        st.metric("Всего", f"{total_value:,.0f} руб.")
+        st.metric("Всего (капитал)", f"{total_value:,.0f} руб.")
         st.divider()
 
     st.header("Импорт данных")
@@ -752,13 +756,14 @@ with st.sidebar:
         if parsed:
             state.replace_state(parsed)
             portfolio_cash = parsed.get("global", {}).get("portfolio_cash", 0.0)
-            if portfolio_cash > 0:
-                st.session_state["ui_cash_rub"] = float(portfolio_cash)
+            # ИСПРАВЛЕНИЕ: разрешаем отрицательный кеш при импорте
+            st.session_state["ui_cash_rub"] = float(portfolio_cash)
+            
             portfolio_data = parsed.get("global", {}).get("portfolio_data", [])
             if portfolio_data:
                 stocks_value = sum(p.get("ТВХ", 0) * p.get("Лотов", 0) for p in portfolio_data)
                 total = stocks_value + portfolio_cash
-                pct = (portfolio_cash / total * 100) if total > 0 else 20.0
+                pct = (portfolio_cash / total * 100) if total != 0 else 0.0
                 st.session_state["ui_cash_pct"] = float(pct)
             keys_to_delete = ["ui_cash_rub", "ui_cash_pct", "rebal_sectors", "rebal_tickers", "plan_ticker"]
             for k in list(st.session_state.keys()):
